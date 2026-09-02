@@ -1,0 +1,62 @@
+{
+  "name": "mockup_hand",
+  "description": "Мокап (рука+фоны).psb",
+  "field_layers": {
+    "series_part1": "77",
+    "series_part2": "35",
+    "number": "739911",
+    "surname_ru": "УИК",
+    "given_ru": "ДЖОН ЙОВАНОВИЧ",
+    "birth_place_ru": "УЗБЕКСКАЯ ССР",
+    "birth_date": "09.02.1964",
+    "issue_date": "23.12.2017",
+    "expiry_date": "23.12.2027",
+    "authority_ru": "гибдд 7716",
+    "residence_ru": "МОСКВА",
+    "full_number": "77 35 739911",
+    "surname_lat": "WICK",
+    "given_lat": "JOHN YOVANIVITH",
+    "birth_place_lat": "UZBEKSKAIA SSR",
+    "authority_lat": "gibdd 7166",
+    "residence_lat": "MOSKVA",
+    "cat_b": "b",
+    "cat_b1": "b1",
+    "cat_m": "m"
+  },
+  "field_formats": {
+    "surname_ru": "upper",
+    "given_ru": "upper",
+    "birth_place_ru": "upper",
+    "residence_ru": "upper",
+    "authority_ru": "lower",
+    "authority_lat": "authority_lat",
+    "surname_lat": "upper",
+    "given_lat": "upper",
+    "birth_place_lat": "upper",
+    "residence_lat": "upper"
+  },
+  "default_restriction": "AS",
+  "back_table_layout": [
+    {"cat": "B", "fields": ["open", "open", "expiry", "expiry"]},
+    {"cat": "B1", "fields": ["open", "expiry"]},
+    {"cat": "M", "fields": ["open", "expiry", "open", "expiry"]},
+    {"field": "restriction", "visible": false},
+    {"field": "special_year"}
+  ],
+  "scene": {
+    "background_smart_object": "Меняющийся фон (Ред)",
+    "background_prefix": "Вариант ",
+    "background_count": 10,
+    "hand_group": "Рука+док (перемещать папку целиком)",
+    "original_layer": "Оригинал",
+    "photo_smart_object": "Photo"
+  },
+  "fonts": {
+    "layer_fields": {
+      "series_part1": "nomer0",
+      "series_part2": "nomer0",
+      "number": "nomer0",
+      "full_number": "nomer"
+    }
+  }
+}

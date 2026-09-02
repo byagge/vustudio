@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VU Studio</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="apple-touch-icon" href="/static/favicon.svg">
+  <link rel="preconnect" href="https://rsms.me/">
+  <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="layout" id="layout">
+
+    <!-- ============ SIDEBAR ============ -->
+    <aside class="sidebar">
+      <div class="sidebar-top">
+        <button type="button" class="org-switch" id="orgSwitch">
+          <span class="brand-mark" data-icon="id-card" data-icon-size="15"></span>
+          <span class="org-name">VU Studio</span>
+          <span class="ic dim org-chev" data-icon="chevrons-up-down" data-icon-size="13"></span>
+        </button>
+        <button type="button" class="icon-btn" id="collapseBtn" data-tip="Свернуть меню">
+          <span class="ic" data-icon="panel-left" data-icon-size="16"></span>
+        </button>
+      </div>
+
+      <div class="brand-menu hidden" id="brandMenu">
+        <button type="button" data-act="refresh"><span class="ic" data-icon="refresh-cw" data-icon-size="14"></span> Обновить данные</button>
+        <button type="button" data-act="collapse"><span class="ic" data-icon="panel-left" data-icon-size="14"></span> Свернуть меню</button>
+        <button type="button" data-act="search"><span class="ic" data-icon="search" data-icon-size="14"></span> Поиск<kbd>Ctrl+K</kbd></button>
+        <div class="brand-menu-sep"></div>
+        <button type="button" data-act="settings"><span class="ic" data-icon="settings" data-icon-size="14"></span> Настройки</button>
+        <button type="button" data-act="about"><span class="ic" data-icon="info" data-icon-size="14"></span> О системе</button>
+      </div>
+
+      <button type="button" class="search-box" id="searchBox" data-tip="Поиск по разделам, задачам и действиям">
+        <span class="ic dim" data-icon="search" data-icon-size="14"></span>
+        <span class="search-label">Поиск</span>
+        <kbd>Ctrl+K</kbd>
+      </button>
+
+      <nav class="nav">
+        <button type="button" class="nav-item active" data-page="home">
+          <span class="ic" data-icon="house"></span><span class="nav-label">Главная</span>
+        </button>
+        <button type="button" class="nav-item" data-page="generate">
+          <span class="ic" data-icon="sparkles"></span><span class="nav-label">Генерация</span>
+        </button>
+        <button type="button" class="nav-item" data-page="render">
+          <span class="ic" data-icon="layers"></span><span class="nav-label">Отрисовка</span>
+        </button>
+        <button type="button" class="nav-item" data-page="jobs">
+          <span class="ic" data-icon="list-checks"></span><span class="nav-label">Задачи</span>
+          <span class="nav-count hidden" id="navJobsCount">0</span>
+        </button>
+        <button type="button" class="nav-item" data-page="system">
+          <span class="ic" data-icon="server"></span><span class="nav-label">Система</span>
+          <span class="nav-dot hidden" id="navSystemDot"></span>
+        </button>
+        <button type="button" class="nav-item" data-page="settings">
+          <span class="ic" data-icon="settings"></span><span class="nav-label">Настройки</span>
+        </button>
+        <button type="button" class="nav-item" data-page="help">
+          <span class="ic" data-icon="circle-help"></span><span class="nav-label">Помощь</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-bottom">
+        <div class="promo" id="promoCard" hidden>
+          <button type="button" class="promo-close" id="promoClose">
+            <span class="ic" data-icon="x" data-icon-size="13"></span>
+          </button>
+          <strong>Worker не подключён</strong>
+          <p>Отрисовка стартует после запуска Photoshop worker.</p>
+          <button type="button" class="btn tiny amber" data-modal="worker">Как запустить</button>
+        </div>
+
+        <div class="user-row">
+          <span class="avatar"><span class="ic" data-icon="user-round" data-icon-size="14"></span></span>
+          <span class="user-meta">
+            <strong>Администратор</strong>
+            <small>VU Studio</small>
+          </span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ============ MAIN ============ -->
+    <main class="main">
+
+      <!-- ===== HOME ===== -->
+      <section id="page-home" class="page active">
+        <header class="page-head">
+          <h1>Главная</h1>
+          <div class="head-right">
+            <span class="refresh-note" id="refreshNote">—</span>
+            <div class="segmented" id="refreshRange" data-tip="Как часто панель обновляет данные">
+              <button type="button" data-ms="5000">5с</button>
+              <button type="button" data-ms="15000" class="on">15с</button>
+              <button type="button" data-ms="60000">1м</button>
+              <button type="button" data-ms="0">Выкл</button>
+            </div>
+          </div>
+        </header>
+
+        <div class="section-head" id="startHead">
+          <h2>С чего начать</h2>
+          <button type="button" class="dismiss" id="dismissStart">
+            <span class="ic" data-icon="x" data-icon-size="13"></span> Скрыть
+          </button>
+        </div>
+
+        <div class="getstarted" id="getStarted">
+          <ol class="gs-steps">
+            <li><span class="gs-badge"><span class="ic" data-icon="sparkles" data-icon-size="15"></span></span><span>1. Сгенерируйте данные</span></li>
+            <li><span class="gs-badge"><span class="ic" data-icon="layers" data-icon-size="15"></span></span><span>2. Запустите отрисовку</span></li>
+            <li><span class="gs-badge"><span class="ic" data-icon="download" data-icon-size="15"></span></span><span>3. Скачайте PSD и JPG</span></li>
+          </ol>
+          <div class="gs-art">
+            <div class="gs-cta">
+              <button type="button" class="gs-card" data-goto="generate">
+                <strong>Создать запись <span class="ic" data-icon="arrow-right" data-icon-size="12"></span></strong>
+                <span>Готовый блок полей за секунду</span>
+              </button>
+              <button type="button" class="gs-card" data-goto="render">
+                <strong>Отрисовать мокап <span class="ic" data-icon="arrow-right" data-icon-size="12"></span></strong>
+                <span>Подстановка в Photoshop</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="metrics" id="homeMetrics"></div>
+
+        <div class="two-col">
+          <div>
+            <h2 class="col-title">Текущая отрисовка</h2>
+            <div class="card" id="activeJobCard">
+              <div class="empty" id="homeJobEmpty">
+                <span class="ic dim" data-icon="layers" data-icon-size="20"></span>
+                <p>Активных задач нет</p>
+                <button type="button" class="btn ghost sm" data-goto="render">Начать отрисовку</button>
+              </div>
+              <div id="homeJobBody" hidden>
+                <div class="card-head">
+                  <span class="mono-id" id="homeJobId"></span>
+                  <span class="pill" id="homeJobBadge">—</span>
+                </div>
+                <div class="track"><div class="track-fill" id="homeTrackFill"></div></div>
+                <p class="note" id="homeJobNote"></p>
+                <div class="row-actions" id="homeJobActions" hidden>
+                  <a class="btn primary sm" id="homeDlJpg" href="#"><span class="ic" data-icon="download" data-icon-size="14"></span> JPG</a>
+                  <a class="btn secondary sm" id="homeDlPsd" href="#"><span class="ic" data-icon="download" data-icon-size="14"></span> PSD</a>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div>
+            <h2 class="col-title">Состояние</h2>
+            <ul class="updates" id="homeUpdates"></ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== GENERATE ===== -->
+      <section id="page-generate" class="page">
+        <header class="page-head"><h1>Генерация</h1></header>
+        <p class="lede">Создание тестовой записи водительского удостоверения.</p>
+
+        <div class="card">
+          <form id="genForm" class="grid-2">
+            <div class="field span-2">
+              <span class="lbl">ФИО и дата рождения</span>
+              <input name="me" type="text" required
+                placeholder="АБСАЛЯМОВ ВЛАДИСЛАВ НАИЛЕВИЧ 08.09.1983 Г. ХАБАРОВСК">
+            </div>
+            <div class="field">
+              <span class="lbl">Регион выдачи</span>
+              <div class="sel" id="selRegion"></div>
+            </div>
+            <label class="switch-row">
+              <input name="valid_now" type="checkbox" checked>
+              <span class="switch"></span>
+              <span class="switch-text">Действующий срок</span>
+            </label>
+            <div class="span-2 form-foot">
+              <button type="submit" class="btn primary">
+                <span class="ic" data-icon="sparkles" data-icon-size="14"></span> Сгенерировать
+              </button>
+            </div>
+          </form>
+        </div>
+
+        <div class="card" id="result" hidden>
+          <div class="card-head">
+            <h3>Результат</h3>
+            <span id="statusBadge" class="pill">—</span>
+          </div>
+          <div class="tabs">
+            <button type="button" class="tab on" data-tab="text">Текст</button>
+            <button type="button" class="tab" data-tab="debug">Проверка</button>
+          </div>
+          <pre id="textOut" class="code"></pre>
+          <pre id="debugOut" class="code hidden"></pre>
+          <div class="row-actions">
+            <button type="button" class="btn secondary" id="copyText">
+              <span class="ic" data-icon="copy" data-icon-size="14"></span> Копировать
+            </button>
+            <button type="button" class="btn primary" id="useForRender">
+              Отрисовать <span class="ic" data-icon="arrow-right" data-icon-size="14"></span>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== RENDER ===== -->
+      <section id="page-render" class="page">
+        <header class="page-head"><h1>Отрисовка</h1></header>
+        <p class="lede">Подстановка данных в Photoshop-мокап.</p>
+
+        <div class="card">
+          <form id="renderForm" class="grid-2">
+            <div class="field span-2">
+              <span class="lbl">Блок полей</span>
+              <textarea id="renderText" name="text_block" rows="12" required placeholder="1  Фамилия …"></textarea>
+            </div>
+            <div class="field">
+              <span class="lbl">Вариант мокапа</span>
+              <div class="sel" id="selMockup"></div>
+            </div>
+            <div class="field" id="bgField">
+              <span class="lbl">Фон <span class="lbl-hint" id="bgHint"></span></span>
+              <div class="sel" id="selBackground"></div>
+            </div>
+            <label class="switch-row span-2">
+              <input type="checkbox" id="genPortrait">
+              <span class="switch"></span>
+              <span class="switch-text">Сгенерировать портрет (ИИ)</span>
+            </label>
+            <div class="field span-2">
+              <span class="lbl">Свой портрет — необязательно</span>
+              <div class="file-drop" id="fileDrop">
+                <span class="ic dim" data-icon="upload" data-icon-size="18"></span>
+                <span id="fileName">Перетащите файл или нажмите для выбора</span>
+                <input type="file" accept="image/*" id="portraitFile">
+              </div>
+            </div>
+            <div class="span-2 form-foot">
+              <button type="submit" class="btn primary lg" id="renderSubmit">
+                <span class="ic" data-icon="play" data-icon-size="14"></span> Отрисовать
+              </button>
+            </div>
+          </form>
+        </div>
+
+        <div class="card" id="renderStatus" hidden>
+          <div class="card-head">
+            <h3>Статус отрисовки</h3>
+            <span id="renderBadge" class="pill">—</span>
+          </div>
+          <div class="track"><div class="track-fill" id="renderTrackFill"></div></div>
+          <div id="renderSteps" class="timeline"></div>
+          <p class="note" id="renderMessage"></p>
+          <div class="preview" id="renderPreview" hidden><img id="renderPreviewImg" alt="Превью"></div>
+          <div class="row-actions" id="renderDownloads" hidden>
+            <a class="btn primary" id="dlJpg" href="#"><span class="ic" data-icon="download" data-icon-size="14"></span> Скачать JPG</a>
+            <a class="btn secondary" id="dlPsd" href="#"><span class="ic" data-icon="download" data-icon-size="14"></span> Скачать PSD</a>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== JOBS ===== -->
+      <section id="page-jobs" class="page">
+        <header class="page-head">
+          <h1>Задачи</h1>
+          <button type="button" class="btn ghost sm" id="refreshJobs">
+            <span class="ic" data-icon="refresh-cw" data-icon-size="14"></span> Обновить
+          </button>
+        </header>
+        <p class="lede">Все задачи очереди отрисовки — из панели, бота и API.</p>
+
+        <div class="chips" id="jobFilters">
+          <button type="button" class="chip on" data-status="">Все</button>
+          <button type="button" class="chip" data-status="pending">В очереди <span class="chip-n" data-n="pending">0</span></button>
+          <button type="button" class="chip" data-status="processing">В работе <span class="chip-n" data-n="processing">0</span></button>
+          <button type="button" class="chip" data-status="done">Готово <span class="chip-n" data-n="done">0</span></button>
+          <button type="button" class="chip" data-status="failed">Ошибки <span class="chip-n" data-n="failed">0</span></button>
+        </div>
+
+        <div class="card no-pad">
+          <table class="table">
+            <thead><tr><th>Задача</th><th>Мокап</th><th>Обновлена</th><th>Статус</th><th></th></tr></thead>
+            <tbody id="jobsBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ===== SYSTEM ===== -->
+      <section id="page-system" class="page">
+        <header class="page-head">
+          <h1>Система</h1>
+          <button type="button" class="btn ghost sm" id="refreshAdmin">
+            <span class="ic" data-icon="refresh-cw" data-icon-size="14"></span> Обновить
+          </button>
+        </header>
+        <p class="lede">Состояние сервера отрисовки и обслуживание.</p>
+
+        <div id="systemAlert" class="banner hidden"></div>
+        <div class="metrics" id="adminCards"></div>
+
+        <div class="card">
+          <div class="card-head"><h3>Обслуживание</h3></div>
+          <p class="note">Если задачи «застряли» в обработке — верните их в очередь.</p>
+          <div class="row-actions">
+            <button type="button" class="btn secondary" id="recoverStale">
+              <span class="ic" data-icon="refresh-cw" data-icon-size="14"></span> Восстановить зависшие
+            </button>
+            <button type="button" class="btn ghost" id="verifyScene">
+              <span class="ic" data-icon="wrench" data-icon-size="14"></span> Проверить мокапы
+            </button>
+            <button type="button" class="btn ghost" data-modal="worker">
+              <span class="ic" data-icon="cpu" data-icon-size="14"></span> Как запустить worker
+            </button>
+          </div>
+          <div id="sceneResult" class="inline-result hidden"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h3>Превью фонов</h3></div>
+          <p class="note">Чтобы в выборе фона были картинки, извлеките слои «Вариант N» из PSB. Это разовая операция, она может занять несколько минут.</p>
+          <div class="row-actions">
+            <button type="button" class="btn secondary" id="extractBg">
+              <span class="ic" data-icon="image" data-icon-size="14"></span> Извлечь превью фонов
+            </button>
+          </div>
+          <div id="extractResult" class="inline-result hidden"></div>
+        </div>
+      </section>
+
+      <!-- ===== SETTINGS ===== -->
+      <section id="page-settings" class="page">
+        <header class="page-head"><h1>Настройки</h1></header>
+        <p class="lede">Параметры доступа и локальные данные панели.</p>
+        <div class="card">
+          <div class="card-head"><h3>Ключ доступа</h3></div>
+          <p class="note">Заполните, только если на сервере включена защита ключом.</p>
+          <div class="field" style="margin-top:12px">
+            <span class="lbl">Ключ</span>
+            <input type="password" id="apiKey" placeholder="оставьте пустым, если не используется">
+          </div>
+          <div class="row-actions">
+            <button type="button" class="btn primary" id="saveKey">
+              <span class="ic" data-icon="key-round" data-icon-size="14"></span> Сохранить
+            </button>
+            <button type="button" class="btn ghost" id="clearLocal">Очистить сохранённые данные</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== HELP ===== -->
+      <section id="page-help" class="page">
+        <header class="page-head"><h1>Помощь</h1></header>
+        <p class="lede">Как устроена система и что делать в типичных ситуациях.</p>
+
+        <div class="metrics help-flow">
+          <div class="metric">
+            <div class="metric-top"><span>Шаг 1</span></div>
+            <div class="metric-value" style="font-size:15px">Данные</div>
+            <div class="metric-spark"><p class="note">Блок полей вводится вручную или создаётся в разделе «Генерация».</p></div>
+          </div>
+          <div class="metric">
+            <div class="metric-top"><span>Шаг 2</span></div>
+            <div class="metric-value" style="font-size:15px">Очередь</div>
+            <div class="metric-spark"><p class="note">Задача сохраняется на диск и ждёт свободный Photoshop.</p></div>
+          </div>
+          <div class="metric">
+            <div class="metric-top"><span>Шаг 3</span></div>
+            <div class="metric-value" style="font-size:15px">Photoshop</div>
+            <div class="metric-spark"><p class="note">Worker на Windows подставляет текст, фон и портрет.</p></div>
+          </div>
+        </div>
+
+        <div class="card no-pad">
+          <div class="acc" id="helpAcc">
+            <details open>
+              <summary>Задача долго висит «В очереди»</summary>
+              <div class="acc-body">
+                <p>Значит, Photoshop не подключён: задачи копятся, но собирать картинку некому. Они не потеряются и выполнятся сами, как только связь появится.</p>
+                <button type="button" class="btn secondary sm" data-modal="worker">Что делать</button>
+              </div>
+            </details>
+            <details>
+              <summary>Где взять Photoshop</summary>
+              <div class="acc-body">
+                <p>Отрисовка работает только с настоящим Adobe Photoshop на Windows. У Adobe есть бесплатный пробный период.</p>
+                <div class="row-actions">
+                  <a class="btn secondary sm" href="https://www.adobe.com/products/photoshop/free-trial-download.html" target="_blank" rel="noopener">Скачать Photoshop</a>
+                  <a class="btn ghost sm" href="https://creativecloud.adobe.com/apps/download/creative-cloud" target="_blank" rel="noopener">Creative Cloud</a>
+                </div>
+              </div>
+            </details>
+            <details>
+              <summary>Что означают статусы</summary>
+              <div class="acc-body">
+                <ul class="dl">
+                  <li><span class="pill pending">В очереди</span> задача создана и ждёт worker</li>
+                  <li><span class="pill processing">Обрабатывается</span> Photoshop открыл мокап и подставляет данные</li>
+                  <li><span class="pill ok">Готово</span> JPG и PSD сохранены, доступны для скачивания</li>
+                  <li><span class="pill failed">Ошибка</span> отрисовка прервалась, причина видна в задаче</li>
+                </ul>
+              </div>
+            </details>
+            <details>
+              <summary>Как получить картинки фонов</summary>
+              <div class="acc-body">
+                <p>Фоны хранятся слоями «Вариант 1…10» внутри PSB, поэтому превью нужно один раз извлечь. Откройте «Система» → «Извлечь превью фонов», либо запустите в терминале:</p>
+                <pre class="code">python scripts/extract_backgrounds.py</pre>
+                <p>Готовые JPEG складываются в <code>assets/backgrounds/</code>. Можно положить туда свои файлы с именами <code>1.jpg</code>…<code>10.jpg</code>.</p>
+              </div>
+            </details>
+            <details>
+              <summary>Задачи «застряли» в обработке</summary>
+              <div class="acc-body">
+                <p>Если worker упал посреди работы, задача остаётся в статусе «Обрабатывается». Нажмите «Восстановить зависшие» в разделе «Система» — такие задачи вернутся в очередь.</p>
+                <button type="button" class="btn secondary sm" data-goto="system">Открыть «Система»</button>
+              </div>
+            </details>
+            <details>
+              <summary>Управление из Telegram</summary>
+              <div class="acc-body">
+                <ul class="dl">
+                  <li><code>/render</code> отрисовать мокап</li>
+                  <li><code>/portrait</code> сгенерировать портрет</li>
+                  <li><code>/status</code> статус очереди и worker</li>
+                  <li><code>/admin</code> админ-панель с восстановлением задач</li>
+                </ul>
+              </div>
+            </details>
+            <details>
+              <summary>Горячие клавиши</summary>
+              <div class="acc-body">
+                <ul class="dl">
+                  <li><kbd>Ctrl+K</kbd> поиск по разделам, задачам и действиям</li>
+                  <li><kbd>/</kbd> тот же поиск, без Ctrl</li>
+                  <li><kbd>?</kbd> открыть эту страницу</li>
+                  <li><kbd>Esc</kbd> закрыть поиск, окно или список</li>
+                  <li><kbd>↑</kbd> <kbd>↓</kbd> <kbd>Enter</kbd> навигация в списках</li>
+                </ul>
+                <p class="note">Клавиши работают при любой раскладке клавиатуры.</p>
+              </div>
+            </details>
+            <details>
+              <summary>Кто обслуживает систему</summary>
+              <div class="acc-body">
+                <p>По вопросам доступа, ошибкам и доработкам пишите <a href="https://t.me/arxixx" target="_blank" rel="noopener">@arxixx</a> в Telegram.</p>
+                <div class="row-actions">
+                  <a class="btn secondary sm" href="https://t.me/arxixx" target="_blank" rel="noopener">Написать @arxixx</a>
+                </div>
+              </div>
+            </details>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- ===== COMMAND PALETTE ===== -->
+  <div class="overlay hidden" id="palette">
+    <div class="palette">
+      <div class="palette-input">
+        <span class="ic dim" data-icon="search" data-icon-size="15"></span>
+        <input type="text" id="paletteInput" placeholder="Разделы, задачи, действия…" autocomplete="off">
+        <kbd>Esc</kbd>
+      </div>
+      <div class="palette-list" id="paletteList"></div>
+    </div>
+  </div>
+
+  <!-- ===== MODAL ===== -->
+  <div class="overlay hidden" id="modal">
+    <div class="modal">
+      <div class="modal-head">
+        <h3 id="modalTitle">—</h3>
+        <button type="button" class="icon-btn" id="modalClose"><span class="ic" data-icon="x" data-icon-size="16"></span></button>
+      </div>
+      <div class="modal-body" id="modalBody"></div>
+      <div class="modal-foot" id="modalFoot"></div>
+    </div>
+  </div>
+
+  <div class="tip" id="tip"></div>
+  <div class="toast-stack" id="toasts"></div>
+
+  <script src="/static/icons.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

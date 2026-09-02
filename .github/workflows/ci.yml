@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    paths:
+      - "vu-qa-bot/**"
+      - "api/**"
+      - "requirements.txt"
+  pull_request:
+    paths:
+      - "vu-qa-bot/**"
+      - "api/**"
+      - "requirements.txt"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install
+        run: pip install -r requirements.txt
+      - name: Acceptance tests
+        working-directory: vu-qa-bot
+        run: python test_vu.py
+      - name: Profile tests
+        working-directory: vu-qa-bot
+        run: python test_profiles.py
+      - name: Eval rules (§9.8)
+        working-directory: vu-qa-bot
+        run: python eval_rules.py --valid 500 --mutated 1100

@@ -1,0 +1,23 @@
+{
+  "description": "Шрифты бланка ВУ для Photoshop-render (PostScript names из PSB).",
+  "fonts": {
+    "nomer": {
+      "file": "Z_NOMER.TTF",
+      "family": "z_nomer",
+      "postscript": "znomer",
+      "aliases": ["z_nomer", "znomer"]
+    },
+    "nomer0": {
+      "file": "Z_NOMER0.TTF",
+      "family": "z_nomer0",
+      "postscript": "z_nomer0",
+      "aliases": ["z_nomer0"]
+    }
+  },
+  "layer_fields": {
+    "series_part1": "nomer0",
+    "series_part2": "nomer0",
+    "number": "nomer0",
+    "full_number": "nomer"
+  }
+}

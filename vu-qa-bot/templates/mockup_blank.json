@@ -1,0 +1,56 @@
+{
+  "name": "mockup_blank",
+  "description": "Прямоугольник 2 копия.psb — только бланк ВУ",
+  "field_layers": {
+    "series_part1": "04",
+    "series_part2": "76",
+    "number": "656492",
+    "surname_ru": "АБСАЛЯМОВ",
+    "given_ru": "ВЛАДИСЛАВ НАИЛЕВИЧ",
+    "birth_place_ru": "Г. ХАБАРОВСК",
+    "birth_date": "08.09.1983",
+    "issue_date": "13.01.2025",
+    "expiry_date": "13.01.2035",
+    "authority_ru": "ГИБДД 4857",
+    "residence_ru": "РЕСПУБЛИКА АЛТАЙ",
+    "full_number": "04 76 656492",
+    "surname_lat": "ABSALIAMOV",
+    "given_lat": "VLADISLAV NAILEVICH",
+    "birth_place_lat": "G. KHABAROVSK",
+    "authority_lat": "gibdd 4857",
+    "residence_lat": "RESPUBLIKA ALTAI",
+    "cat_b": "b",
+    "cat_b1": "b1",
+    "cat_m": "m"
+  },
+  "field_formats": {
+    "surname_ru": "upper",
+    "given_ru": "upper",
+    "birth_place_ru": "upper",
+    "residence_ru": "upper",
+    "authority_ru": "upper",
+    "authority_lat": "authority_lat",
+    "surname_lat": "upper",
+    "given_lat": "upper",
+    "birth_place_lat": "upper",
+    "residence_lat": "upper",
+    "special_marks_text_group": "special_line14"
+  },
+  "default_restriction": "—",
+  "back_table_layout": [
+    {"cat": "B", "fields": ["open", "open", "expiry", "expiry", "open", "expiry"]},
+    {"cat": "B1", "fields": ["open", "expiry"]},
+    {"cat": "M", "fields": ["open", "expiry"]},
+    {"field": "restriction", "visible": false},
+    {"field": "special_marks"}
+  ],
+  "scene": {},
+  "fonts": {
+    "layer_fields": {
+      "series_part1": "nomer0",
+      "series_part2": "nomer0",
+      "number": "nomer0",
+      "full_number": "nomer"
+    }
+  }
+}

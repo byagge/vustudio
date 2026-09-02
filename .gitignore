@@ -1,0 +1,35 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Secrets & local data
+.env
+profiles.json
+*.jsonl
+result.json
+
+# Runtime / generated
+data/
+output/
+output.zip
+queue/
+_tmp_embed.psb
+_extract/
+*.job.json
+*.run.jsx
+
+# IDE / editor
+.history/
+.DS_Store
+
+# Task specs (local docs)
+task1.md
+task2.md
+task3.md
+task4.md
+
+# Large mockup assets (copy manually to server)
+Мокап (рука+фоны).psb
+Прямоугольник 2 копия.psb
