@@ -10,13 +10,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 
-try:
-    from dotenv import load_dotenv
-    # Корневой .env — главный; vu-qa-bot/.env только дополняет недостающие ключи
-    load_dotenv(ROOT.parent / ".env")
-    load_dotenv(ROOT / ".env", override=False)
-except ImportError:
-    pass
+import load_env  # noqa: F401, E402
 
 
 @dataclass(frozen=True)

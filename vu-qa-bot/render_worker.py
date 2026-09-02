@@ -9,6 +9,8 @@ import sys
 import time
 from pathlib import Path
 
+import load_env  # noqa: F401 — .env до RenderSettings.from_env()
+
 from photoshop_renderer import PhotoshopRenderer, RenderSettings
 from photoshop_server import build_worker_heartbeat, check_photoshop_exe, lock_path, queue_dir, recover_stale_jobs, stale_job_sec, write_heartbeat
 from render_queue import RenderQueue

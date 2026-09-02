@@ -6,6 +6,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+import load_env  # noqa: F401
+
 
 @dataclass(frozen=True)
 class PortraitSettings:
