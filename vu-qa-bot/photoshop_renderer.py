@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import subprocess
 import uuid
 from dataclasses import dataclass
@@ -166,9 +167,18 @@ class PhotoshopRenderer:
         return self.render_task(task)
 
     def _run_photoshop(self, job_file: Path) -> None:
+        # CLI often behaves better than COM on Photoshop 2025/2026.
+        prefer_cli = os.getenv("PHOTOSHOP_USE_CLI", "1").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        if prefer_cli and self._run_via_cli(job_file):
+            return
         if self._run_via_com(job_file):
             return
-        if self._run_via_cli(job_file):
+        if not prefer_cli and self._run_via_cli(job_file):
             return
         raise RuntimeError(
             "Adobe Photoshop не найден. Укажите PHOTOSHOP_EXE в .env "

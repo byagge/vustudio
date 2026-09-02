@@ -531,6 +531,29 @@
         }
     }
 
+    function safeCleanup(doc, opened, job, workName) {
+        try {
+            closeJobDocument(doc, opened.template, job);
+        } catch (e1) {}
+        if (workName) {
+            try {
+                if (workName.indexOf("vu_") === 0) {
+                    closeDocByName(workName);
+                }
+            } catch (e2) {}
+        }
+    }
+
+    function writeLog(jobPath, msg) {
+        try {
+            var f = new File(String(jobPath) + ".log");
+            f.encoding = "UTF-8";
+            f.open("a");
+            f.writeln(msg);
+            f.close();
+        } catch (e) {}
+    }
+
     function main() {
         var jobPath = (typeof OTRIS_JOB_PATH !== "undefined")
             ? OTRIS_JOB_PATH
@@ -547,21 +570,28 @@
         var opened = openJobDocument(job, templateFile);
         var doc = opened.work;
         var workName = docName(doc);
+        var renderError = null;
+
         try {
             applyJob(doc, job);
             saveMaster(doc, psdFile, isPsb);
             exportJpeg(doc, jpgFile);
-        } finally {
-            try {
-                closeJobDocument(doc, opened.template, job);
-            } catch (cleanupErr) {}
-            // Fallback for PS 2026 stale handles: close by saved name.
-            try {
-                if (workName && workName.indexOf("vu_") === 0) {
-                    closeDocByName(workName);
-                }
-            } catch (cleanupErr2) {}
+        } catch (e) {
+            renderError = e;
+            writeLog(jobPath, "render error: " + e);
         }
+
+        // Cleanup outside try/finally: PS 2026 throws Error 54 on stale handles.
+        safeCleanup(doc, opened, job, workName);
+
+        if (psdFile.exists && jpgFile.exists) {
+            writeLog(jobPath, "ok");
+            return;
+        }
+        if (renderError) {
+            throw renderError;
+        }
+        throw new Error("Output files were not created: " + psdFile.fsName);
     }
 
     app.displayDialogs = DialogModes.NO;
