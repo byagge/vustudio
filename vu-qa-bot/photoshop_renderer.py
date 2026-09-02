@@ -116,13 +116,17 @@ class PhotoshopRenderer:
         try:
             self._run_photoshop(job_file)
         except Exception as e:
-            log.exception("Photoshop render failed")
-            return RenderResult(
-                job=RenderJob(record=None, text_block=task.text_block),
-                output_paths=[],
-                status="error",
-                message=f"Ошибка Photoshop: {e}",
-            )
+            outputs = [p for p in (psd_out, jpg_out) if p.is_file()]
+            if len(outputs) >= 2:
+                log.warning("Photoshop reported error but output files exist: %s", e)
+            else:
+                log.exception("Photoshop render failed")
+                return RenderResult(
+                    job=RenderJob(record=None, text_block=task.text_block),
+                    output_paths=outputs,
+                    status="error",
+                    message=f"Ошибка Photoshop: {e}",
+                )
 
         outputs = [p for p in (psd_out, jpg_out) if p.is_file()]
         if len(outputs) < 2:

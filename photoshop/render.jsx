@@ -258,17 +258,35 @@
         return { work: workDoc, template: templateDoc };
     }
 
+    function docIsOpen(doc) {
+        if (!doc) {
+            return false;
+        }
+        try {
+            for (var i = 0; i < app.documents.length; i++) {
+                if (app.documents[i] === doc) {
+                    return true;
+                }
+            }
+        } catch (e) {}
+        return false;
+    }
+
     function closeJobDocument(workDoc, templateDoc, job) {
-        if (!workDoc) {
+        if (!docIsOpen(workDoc)) {
             return;
         }
-        var isDuplicate = workDoc.name.indexOf("vu_") === 0;
-        if (isDuplicate) {
-            workDoc.close(SaveOptions.DONOTSAVECHANGES);
-            return;
-        }
-        if (!job.keep_template_open) {
-            workDoc.close(SaveOptions.DONOTSAVECHANGES);
+        try {
+            var isDuplicate = workDoc.name.indexOf("vu_") === 0;
+            if (isDuplicate) {
+                workDoc.close(SaveOptions.DONOTSAVECHANGES);
+                return;
+            }
+            if (!job.keep_template_open) {
+                workDoc.close(SaveOptions.DONOTSAVECHANGES);
+            }
+        } catch (e) {
+            // cleanup is best-effort; PSD/JPG may already be saved
         }
     }
 
@@ -441,13 +459,18 @@
         var dup = doc.duplicate();
         try {
             dup.flatten();
-            var opts = new ExportOptionsSaveForWeb();
-            opts.format = SaveDocumentType.JPEG;
-            opts.quality = 85;
-            opts.optimized = true;
-            dup.exportDocument(file, ExportType.SAVEFORWEB, opts);
+            // Save For Web removed in newer Photoshop; JPEGSaveOptions works on 2023-2026.
+            var opts = new JPEGSaveOptions();
+            opts.quality = 10;
+            opts.embedColorProfile = true;
+            opts.formatOptions = FormatOptions.STANDARDBASELINE;
+            dup.saveAs(file, opts, true, Extension.LOWERCASE);
         } finally {
-            dup.close(SaveOptions.DONOTSAVECHANGES);
+            try {
+                if (docIsOpen(dup)) {
+                    dup.close(SaveOptions.DONOTSAVECHANGES);
+                }
+            } catch (e2) {}
         }
     }
 
