@@ -24,6 +24,7 @@ ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_JSX = ROOT / "photoshop" / "render.jsx"
 
 PHOTOSHOP_CANDIDATES = [
+    r"C:\Program Files\Adobe\Adobe Photoshop 2026\Photoshop.exe",
     r"C:\Program Files\Adobe\Adobe Photoshop 2025\Photoshop.exe",
     r"C:\Program Files\Adobe\Adobe Photoshop 2024\Photoshop.exe",
     r"C:\Program Files\Adobe\Adobe Photoshop 2023\Photoshop.exe",
@@ -58,6 +59,25 @@ def _find_photoshop() -> Path | None:
 
 def _stamp() -> str:
     return datetime.now().strftime("%Y%m%d_%H%M%S")
+
+
+def _jsx_log_path(job_file: Path) -> Path:
+    return Path(str(job_file) + ".log")
+
+
+def _read_jsx_log(job_file: Path) -> str:
+    p = _jsx_log_path(job_file)
+    if not p.is_file():
+        return ""
+    return p.read_text(encoding="utf-8", errors="replace").strip()[-3000:]
+
+
+def _format_ps_error(job_file: Path, err: Exception) -> str:
+    msg = str(err)
+    jsx_log = _read_jsx_log(job_file)
+    if jsx_log:
+        msg = f"{msg}\nJSX log ({_jsx_log_path(job_file).name}):\n{jsx_log}"
+    return msg
 
 
 class PhotoshopRenderer:
@@ -126,7 +146,7 @@ class PhotoshopRenderer:
                     job=RenderJob(record=None, text_block=task.text_block),
                     output_paths=outputs,
                     status="error",
-                    message=f"Ошибка Photoshop: {e}",
+                    message=_format_ps_error(job_file, e),
                 )
 
         outputs = [p for p in (psd_out, jpg_out) if p.is_file()]
@@ -167,23 +187,30 @@ class PhotoshopRenderer:
         return self.render_task(task)
 
     def _run_photoshop(self, job_file: Path) -> None:
-        # CLI often behaves better than COM on Photoshop 2025/2026.
-        prefer_cli = os.getenv("PHOTOSHOP_USE_CLI", "1").strip().lower() in {
+        prefer_cli = os.getenv("PHOTOSHOP_USE_CLI", "0").strip().lower() in {
             "1",
             "true",
             "yes",
             "on",
         }
-        if prefer_cli and self._run_via_cli(job_file):
-            return
-        if self._run_via_com(job_file):
-            return
-        if not prefer_cli and self._run_via_cli(job_file):
-            return
-        raise RuntimeError(
-            "Adobe Photoshop не найден. Укажите PHOTOSHOP_EXE в .env "
-            "или установите Photoshop."
-        )
+        order = ("cli", "com") if prefer_cli else ("com", "cli")
+        errors: list[str] = []
+
+        for mode in order:
+            try:
+                ok = self._run_via_cli(job_file) if mode == "cli" else self._run_via_com(job_file)
+                if ok:
+                    return
+                errors.append(f"{mode}: failed without exception")
+            except Exception as e:
+                errors.append(f"{mode}: {e}")
+                log.warning("Photoshop %s failed: %s", mode, e)
+
+        jsx_log = _read_jsx_log(job_file)
+        detail = "; ".join(errors)
+        if jsx_log:
+            detail = f"{detail}\nJSX log:\n{jsx_log}"
+        raise RuntimeError(detail or "Photoshop render failed")
 
     def _wrapper_jsx(self, job_file: Path) -> Path:
         job_path = str(job_file.resolve()).replace("\\", "/")
@@ -211,16 +238,34 @@ class PhotoshopRenderer:
     def _run_via_cli(self, job_file: Path) -> bool:
         exe = self.settings.photoshop_exe
         if not exe or not exe.is_file():
+            log.error("PHOTOSHOP_EXE not found for CLI mode")
             return False
         wrapper = self._wrapper_jsx(job_file)
-        subprocess.run(
-            [str(exe), "-r", str(wrapper.resolve())],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=900,
+        wrapper_s = str(wrapper.resolve())
+        # PS 2026: plain path often works better than -r on Windows Server.
+        attempts = (
+            [str(exe), wrapper_s],
+            [str(exe), "-r", wrapper_s],
         )
-        return True
+        last = ""
+        for args in attempts:
+            try:
+                r = subprocess.run(
+                    args,
+                    capture_output=True,
+                    text=True,
+                    timeout=900,
+                )
+                if r.returncode == 0:
+                    return True
+                last = (r.stderr or r.stdout or f"exit code {r.returncode}").strip()
+                log.error("Photoshop CLI %s -> %s", args, last[:800])
+            except Exception as e:
+                last = str(e)
+                log.error("Photoshop CLI exception: %s", e)
+        if last:
+            raise RuntimeError(last)
+        return False
 
 
 def get_renderer() -> DocumentRenderer:
