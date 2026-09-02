@@ -258,35 +258,56 @@
         return { work: workDoc, template: templateDoc };
     }
 
+    function docName(doc) {
+        try {
+            return String(doc.name);
+        } catch (e) {
+            return "";
+        }
+    }
+
     function docIsOpen(doc) {
-        if (!doc) {
+        var name = docName(doc);
+        if (!name) {
             return false;
         }
-        try {
-            for (var i = 0; i < app.documents.length; i++) {
-                if (app.documents[i] === doc) {
+        for (var i = 0; i < app.documents.length; i++) {
+            try {
+                if (app.documents[i].name === name) {
                     return true;
                 }
-            }
-        } catch (e) {}
+            } catch (e) {}
+        }
         return false;
     }
 
-    function closeJobDocument(workDoc, templateDoc, job) {
-        if (!docIsOpen(workDoc)) {
+    function closeDocByName(name) {
+        if (!name) {
             return;
         }
+        for (var i = app.documents.length - 1; i >= 0; i--) {
+            try {
+                var d = app.documents[i];
+                if (d.name === name) {
+                    d.close(SaveOptions.DONOTSAVECHANGES);
+                    return;
+                }
+            } catch (e) {}
+        }
+    }
+
+    function closeJobDocument(workDoc, templateDoc, job) {
         try {
-            var isDuplicate = workDoc.name.indexOf("vu_") === 0;
-            if (isDuplicate) {
-                workDoc.close(SaveOptions.DONOTSAVECHANGES);
+            var name = docName(workDoc);
+            if (!name || !docIsOpen(workDoc)) {
                 return;
             }
-            if (!job.keep_template_open) {
-                workDoc.close(SaveOptions.DONOTSAVECHANGES);
+            var isDuplicate = name.indexOf("vu_") === 0 || name.indexOf("_vu_") === 0;
+            if (isDuplicate || !job.keep_template_open) {
+                closeDocByName(name);
             }
         } catch (e) {
-            // cleanup is best-effort; PSD/JPG may already be saved
+            // PS 2025/2026 may throw on stale document handles after saveAs.
         }
     }
 
@@ -405,16 +426,30 @@
     }
 
     function editSmartObject(layer, fn) {
-        var parentDoc = app.activeDocument;
-        parentDoc.activeLayer = layer;
+        var parentName = docName(app.activeDocument);
+        app.activeDocument.activeLayer = layer;
         var id = stringIDToTypeID("placedLayerEditContents");
         executeAction(id, undefined, DialogModes.NO);
         var innerDoc = app.activeDocument;
+        var innerName = docName(innerDoc);
         try {
             fn(innerDoc);
         } finally {
-            innerDoc.close(SaveOptions.SAVECHANGES);
-            app.activeDocument = parentDoc;
+            try {
+                if (docIsOpen(innerDoc)) {
+                    innerDoc.close(SaveOptions.SAVECHANGES);
+                } else {
+                    closeDocByName(innerName);
+                }
+            } catch (e1) {}
+            try {
+                for (var i = 0; i < app.documents.length; i++) {
+                    if (app.documents[i].name === parentName) {
+                        app.activeDocument = app.documents[i];
+                        break;
+                    }
+                }
+            } catch (e2) {}
         }
     }
 
@@ -456,25 +491,33 @@
     }
 
     function exportJpeg(doc, file) {
-        var dup = doc.duplicate();
+        var parentName = docName(doc);
+        var dupName = "_vu_jpg_" + (new Date().getTime());
+        var dup = null;
         try {
+            app.activeDocument = doc;
+            dup = doc.duplicate(dupName, true);
             dup.flatten();
-            // Save For Web removed in newer Photoshop; JPEGSaveOptions works on 2023-2026.
             var opts = new JPEGSaveOptions();
-            opts.quality = 10;
+            opts.quality = 12;
             opts.embedColorProfile = true;
             opts.formatOptions = FormatOptions.STANDARDBASELINE;
             dup.saveAs(file, opts, true, Extension.LOWERCASE);
         } finally {
+            closeDocByName(dupName);
             try {
-                if (docIsOpen(dup)) {
-                    dup.close(SaveOptions.DONOTSAVECHANGES);
+                for (var i = 0; i < app.documents.length; i++) {
+                    if (app.documents[i].name === parentName) {
+                        app.activeDocument = app.documents[i];
+                        break;
+                    }
                 }
-            } catch (e2) {}
+            } catch (e) {}
         }
     }
 
     function saveMaster(doc, file, isPsb) {
+        app.activeDocument = doc;
         if (isPsb) {
             var psbOpts = new PhotoshopSaveOptions();
             psbOpts.layers = true;
@@ -503,12 +546,21 @@
 
         var opened = openJobDocument(job, templateFile);
         var doc = opened.work;
+        var workName = docName(doc);
         try {
             applyJob(doc, job);
             saveMaster(doc, psdFile, isPsb);
             exportJpeg(doc, jpgFile);
         } finally {
-            closeJobDocument(doc, opened.template, job);
+            try {
+                closeJobDocument(doc, opened.template, job);
+            } catch (cleanupErr) {}
+            // Fallback for PS 2026 stale handles: close by saved name.
+            try {
+                if (workName && workName.indexOf("vu_") === 0) {
+                    closeDocByName(workName);
+                }
+            } catch (cleanupErr2) {}
         }
     }
 
