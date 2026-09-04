@@ -1,9 +1,16 @@
 #target photoshop
+var OTRIS_JSX_VERSION = "2026-09-04.2";
 
 (function () {
     if (typeof app === "undefined" || !app.documents) {
         return;
     }
+
+    try {
+        $.level = 0;
+    } catch (eLevel) {}
+
+    var gJobLogPath = null;
 
     function readJson(file) {
         if (!file.exists) {
@@ -14,6 +21,20 @@
         var raw = file.read();
         file.close();
         return eval("(" + raw + ")");
+    }
+
+    function writeLog(jobPath, msg) {
+        var path = jobPath || gJobLogPath;
+        if (!path) {
+            return;
+        }
+        try {
+            var f = new File(String(path) + ".log");
+            f.encoding = "UTF-8";
+            f.open("a");
+            f.writeln(msg);
+            f.close();
+        } catch (e) {}
     }
 
     function collectTextLayers(container, out, directOnly) {
@@ -224,40 +245,6 @@
         return String(p).replace(/\\/g, "/").toLowerCase();
     }
 
-    function findOpenDoc(templatePath) {
-        var want = normalizePath(templatePath);
-        for (var i = 0; i < app.documents.length; i++) {
-            var d = app.documents[i];
-            try {
-                if (normalizePath(d.fullName.fsName) === want) {
-                    return d;
-                }
-            } catch (e) {}
-        }
-        return null;
-    }
-
-    function openJobDocument(job, templateFile) {
-        var workDoc = null;
-        var templateDoc = null;
-
-        if (job.reuse_open_template) {
-            templateDoc = findOpenDoc(job.template);
-            if (templateDoc) {
-                workDoc = templateDoc.duplicate("vu_" + (job.job_id || "render"), false);
-            }
-        }
-
-        if (!workDoc) {
-            workDoc = app.open(templateFile);
-            if (job.keep_template_open && !job.reuse_open_template) {
-                templateDoc = workDoc;
-            }
-        }
-
-        return { work: workDoc, template: templateDoc };
-    }
-
     function docName(doc) {
         try {
             return String(doc.name);
@@ -266,8 +253,20 @@
         }
     }
 
-    function docIsOpen(doc) {
-        var name = docName(doc);
+    function findOpenDoc(templatePath) {
+        var want = normalizePath(templatePath);
+        for (var i = 0; i < app.documents.length; i++) {
+            try {
+                var d = app.documents[i];
+                if (normalizePath(d.fullName.fsName) === want) {
+                    return d;
+                }
+            } catch (e) {}
+        }
+        return null;
+    }
+
+    function docExists(name) {
         if (!name) {
             return false;
         }
@@ -281,34 +280,108 @@
         return false;
     }
 
-    function closeDocByName(name) {
+    function activateByName(name) {
         if (!name) {
-            return;
+            return false;
         }
-        for (var i = app.documents.length - 1; i >= 0; i--) {
+        for (var i = 0; i < app.documents.length; i++) {
             try {
                 var d = app.documents[i];
                 if (d.name === name) {
-                    d.close(SaveOptions.DONOTSAVECHANGES);
-                    return;
+                    app.activeDocument = d;
+                    return true;
                 }
             } catch (e) {}
         }
+        return false;
     }
 
-    function closeJobDocument(workDoc, templateDoc, job) {
+    function closeActive(saveChanges) {
         try {
-            var name = docName(workDoc);
-            if (!name || !docIsOpen(workDoc)) {
-                return;
-            }
-            var isDuplicate = name.indexOf("vu_") === 0 || name.indexOf("_vu_") === 0;
-            if (isDuplicate || !job.keep_template_open) {
-                closeDocByName(name);
-            }
-        } catch (e) {
-            // PS 2025/2026 may throw on stale document handles after saveAs.
+            var desc = new ActionDescriptor();
+            desc.putEnumerated(
+                stringIDToTypeID("saving"),
+                stringIDToTypeID("yesNo"),
+                stringIDToTypeID(saveChanges ? "yes" : "no")
+            );
+            executeAction(stringIDToTypeID("close"), desc, DialogModes.NO);
+            return;
+        } catch (eSid) {}
+        try {
+            var desc2 = new ActionDescriptor();
+            desc2.putEnumerated(
+                charIDToTypeID("Svng"),
+                charIDToTypeID("YsN "),
+                charIDToTypeID(saveChanges ? "yes " : "no  ")
+            );
+            executeAction(charIDToTypeID("Cls "), desc2, DialogModes.NO);
+        } catch (eCid) {
+            app.activeDocument.close(
+                saveChanges ? SaveOptions.SAVECHANGES : SaveOptions.DONOTSAVECHANGES
+            );
         }
+    }
+
+    function closeByName(name) {
+        if (!name || !activateByName(name)) {
+            return;
+        }
+        try {
+            closeActive(false);
+            return;
+        } catch (e1) {}
+        try {
+            app.activeDocument.close(SaveOptions.DONOTSAVECHANGES);
+        } catch (e2) {}
+    }
+
+    function uniqueWorkName(job) {
+        var base = "vu_" + String(job.job_id || "render").replace(/[^a-zA-Z0-9_-]/g, "");
+        var name = base;
+        var n = 1;
+        while (docExists(name)) {
+            name = base + "_" + n;
+            n++;
+        }
+        return name;
+    }
+
+    function openJobDocument(job, templateFile) {
+        var templateDoc = findOpenDoc(job.template);
+        if (!templateDoc) {
+            templateDoc = app.open(templateFile);
+        }
+        var templateName = docName(templateDoc);
+        var workName = uniqueWorkName(job);
+        var isDuplicate = false;
+
+        try {
+            app.activeDocument = templateDoc;
+            templateDoc.duplicate(workName, false);
+            workName = docName(app.activeDocument) || workName;
+            isDuplicate = true;
+        } catch (eDup) {
+            writeLog(null, "duplicate failed, working on template: " + eDup);
+            workName = templateName;
+            isDuplicate = false;
+            try {
+                app.activeDocument = templateDoc;
+            } catch (eAct) {}
+        }
+
+        if (isDuplicate && !job.keep_template_open) {
+            try {
+                closeByName(templateName);
+            } catch (eCloseTpl) {
+                writeLog(null, "template close skipped: " + eCloseTpl);
+            }
+        }
+
+        return {
+            workName: workName,
+            templateName: templateName,
+            isDuplicate: isDuplicate
+        };
     }
 
     function forEachLayerByName(container, name, fn) {
@@ -389,11 +462,26 @@
         if (!file.exists) {
             return;
         }
-        var idPlc = charIDToTypeID("Plc ");
+        try {
+            app.activeDocument = doc;
+        } catch (eAct) {}
         var desc = new ActionDescriptor();
         desc.putPath(charIDToTypeID("null"), file);
         desc.putEnumerated(charIDToTypeID("FTcs"), charIDToTypeID("QCSt"), charIDToTypeID("Qcsa"));
-        executeAction(idPlc, desc, DialogModes.NO);
+        try {
+            desc.putBoolean(charIDToTypeID("Lnkd"), false);
+        } catch (eLnk) {}
+        try {
+            executeAction(charIDToTypeID("Plc "), desc, DialogModes.NO);
+        } catch (ePlc) {
+            try {
+                var desc2 = new ActionDescriptor();
+                desc2.putPath(charIDToTypeID("null"), file);
+                executeAction(stringIDToTypeID("placeEvent"), desc2, DialogModes.NO);
+            } catch (ePlc2) {
+                return;
+            }
+        }
         scaleLayerToCanvas(doc);
     }
 
@@ -417,53 +505,87 @@
 
     function replacePortrait(layer, imagePath, job) {
         editSmartObject(layer, function (innerDoc) {
-            while (innerDoc.layers.length > 0) {
-                innerDoc.layers[0].remove();
-            }
+            var before = innerDoc.layers.length;
             placeImageInDoc(innerDoc, imagePath);
+            if (innerDoc.layers.length <= before) {
+                writeLog(null, "portrait place failed: " + imagePath);
+                return;
+            }
             scaleActiveLayerCover(innerDoc);
+            try {
+                while (innerDoc.layers.length > 1) {
+                    innerDoc.layers[innerDoc.layers.length - 1].remove();
+                }
+            } catch (eRm) {}
         });
     }
 
     function editSmartObject(layer, fn) {
         var parentName = docName(app.activeDocument);
-        app.activeDocument.activeLayer = layer;
-        var id = stringIDToTypeID("placedLayerEditContents");
-        executeAction(id, undefined, DialogModes.NO);
-        var innerDoc = app.activeDocument;
-        var innerName = docName(innerDoc);
         try {
-            fn(innerDoc);
-        } finally {
+            app.activeDocument.activeLayer = layer;
+        } catch (eSel) {
+            return;
+        }
+        var innerName = "";
+        var opened = false;
+        try {
             try {
-                if (docIsOpen(innerDoc)) {
-                    innerDoc.close(SaveOptions.SAVECHANGES);
-                } else {
-                    closeDocByName(innerName);
+                var desc = new ActionDescriptor();
+                executeAction(stringIDToTypeID("placedLayerEditContents"), desc, DialogModes.NO);
+            } catch (eDesc) {
+                if (docName(app.activeDocument) === parentName) {
+                    executeAction(stringIDToTypeID("placedLayerEditContents"), undefined, DialogModes.NO);
                 }
-            } catch (e1) {}
-            try {
-                for (var i = 0; i < app.documents.length; i++) {
-                    if (app.documents[i].name === parentName) {
-                        app.activeDocument = app.documents[i];
-                        break;
+            }
+            innerName = docName(app.activeDocument);
+            if (!innerName || innerName === parentName) {
+                return;
+            }
+            opened = true;
+            fn(app.activeDocument);
+        } catch (eEdit) {
+            writeLog(null, "smart object skipped (" + layer.name + "): " + eEdit);
+        } finally {
+            if (opened && innerName && innerName !== parentName && activateByName(innerName)) {
+                try {
+                    closeActive(true);
+                } catch (eClose1) {
+                    try {
+                        app.activeDocument.close(SaveOptions.SAVECHANGES);
+                    } catch (eClose2) {
+                        try {
+                            app.activeDocument.save();
+                            closeActive(false);
+                        } catch (eClose3) {}
                     }
                 }
-            } catch (e2) {}
+            }
+            activateByName(parentName);
         }
     }
 
-    function walkLayers(layers, job) {
+    function isSmartObject(layer) {
+        try {
+            return layer.kind === LayerKind.SMARTOBJECT;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function walkLayers(layers, job, depth) {
+        if (depth > 6) {
+            return;
+        }
         for (var i = 0; i < layers.length; i++) {
             var layer = layers[i];
             if (layer.typename === "LayerSet") {
-                walkLayers(layer.layers, job);
-            } else if (layer.typename === "ArtLayer") {
-                if (layer.kind === LayerKind.SMARTOBJECT) {
-                    var scene = job.scene || {};
-                    var isBg = scene.background_smart_object && layer.name === scene.background_smart_object;
-                    var isPhoto = scene.photo_smart_object && layer.name === scene.photo_smart_object;
-
+                walkLayers(layer.layers, job, depth);
+            } else if (layer.typename === "ArtLayer" && isSmartObject(layer)) {
+                var scene = job.scene || {};
+                var isBg = scene.background_smart_object && layer.name === scene.background_smart_object;
+                var isPhoto = scene.photo_smart_object && layer.name === scene.photo_smart_object;
+                try {
                     if (isPhoto && job.portrait_path) {
                         replacePortrait(layer, job.portrait_path, job);
                     } else if (isBg) {
@@ -472,86 +594,124 @@
                         });
                     } else {
                         editSmartObject(layer, function (innerDoc) {
-                            applyJob(innerDoc, job);
+                            applyJob(innerDoc, job, depth + 1);
                         });
                     }
+                } catch (eSO) {
+                    writeLog(null, "walkLayers skip " + layer.name + ": " + eSO);
                 }
             }
         }
     }
 
-    function applyJob(doc, job) {
+    function applyJob(doc, job, depth) {
         applyMockupVariant(doc, job);
         var byName = job.layers_by_name || {};
         updateNamedTextLayers(doc, byName);
         applyCategoryVisibility(doc, job.category_visibility || null, byName);
         updateTextGroupByIndex(doc, job.text_group_values || [], job.text_group_visibility || null);
         applyFontRules(doc, job);
-        walkLayers(doc.layers, job);
+        walkLayers(doc.layers, job, depth || 0);
     }
 
-    function exportJpeg(doc, file) {
-        var parentName = docName(doc);
+    function saveMasterAM(file, isPsb, asCopy) {
+        var desc = new ActionDescriptor();
+        var fmt = new ActionDescriptor();
+        try {
+            fmt.putBoolean(stringIDToTypeID("maximizeCompatibility"), true);
+        } catch (eMc) {}
+        var typeId = isPsb ? stringIDToTypeID("largeDocumentFormat") : charIDToTypeID("Pht3");
+        desc.putObject(charIDToTypeID("As  "), typeId, fmt);
+        desc.putPath(charIDToTypeID("In  "), file);
+        desc.putBoolean(charIDToTypeID("Cpy "), !!asCopy);
+        try {
+            desc.putBoolean(charIDToTypeID("LwCs"), true);
+        } catch (eLc) {}
+        executeAction(charIDToTypeID("save"), desc, DialogModes.NO);
+    }
+
+    function saveMasterByName(workName, file, isPsb, asCopy) {
+        if (!activateByName(workName)) {
+            throw new Error("Work document not found: " + workName);
+        }
+        var opts = new PhotoshopSaveOptions();
+        opts.layers = true;
+        opts.embedColorProfile = true;
+        try {
+            opts.maximizeCompatibility = true;
+        } catch (eMc) {}
+        try {
+            app.activeDocument.saveAs(file, opts, !!asCopy, Extension.LOWERCASE);
+        } catch (eSave) {
+            writeLog(null, "saveAs DOM failed, Action Manager: " + eSave);
+            saveMasterAM(file, isPsb, asCopy);
+        }
+        if (asCopy) {
+            return workName;
+        }
+        var savedName = "";
+        try {
+            savedName = docName(app.activeDocument);
+        } catch (eName) {}
+        return savedName || file.name;
+    }
+
+    function jpegOptions() {
+        var opts = new JPEGSaveOptions();
+        opts.quality = 12;
+        opts.embedColorProfile = true;
+        opts.formatOptions = FormatOptions.STANDARDBASELINE;
+        try {
+            opts.matte = MatteType.NONE;
+        } catch (eM) {}
+        return opts;
+    }
+
+    function exportJpegByName(workName, file) {
+        if (!activateByName(workName)) {
+            throw new Error("Work document not found for JPEG: " + workName);
+        }
+        var opts = jpegOptions();
+        try {
+            app.activeDocument.saveAs(file, opts, true, Extension.LOWERCASE);
+            if (fileReady(file)) {
+                return;
+            }
+        } catch (eJpg) {
+            writeLog(null, "jpeg as-copy failed: " + eJpg);
+        }
+
         var dupName = "_vu_jpg_" + (new Date().getTime());
-        var dup = null;
+        var actual = "";
         try {
-            app.activeDocument = doc;
-            dup = doc.duplicate(dupName, true);
-            dup.flatten();
-            var opts = new JPEGSaveOptions();
-            opts.quality = 12;
-            opts.embedColorProfile = true;
-            opts.formatOptions = FormatOptions.STANDARDBASELINE;
-            dup.saveAs(file, opts, true, Extension.LOWERCASE);
+            if (!activateByName(workName)) {
+                throw new Error("Work document lost before JPEG flatten");
+            }
+            app.activeDocument.duplicate(dupName, true);
+            actual = docName(app.activeDocument) || dupName;
+            try {
+                app.activeDocument.flatten();
+            } catch (eFlat) {}
+            app.activeDocument.saveAs(file, opts, true, Extension.LOWERCASE);
         } finally {
-            closeDocByName(dupName);
-            try {
-                for (var i = 0; i < app.documents.length; i++) {
-                    if (app.documents[i].name === parentName) {
-                        app.activeDocument = app.documents[i];
-                        break;
-                    }
-                }
-            } catch (e) {}
+            closeByName(actual || dupName);
+            if (actual && actual !== dupName) {
+                closeByName(dupName);
+            }
+            activateByName(workName);
         }
     }
 
-    function saveMaster(doc, file, isPsb) {
-        app.activeDocument = doc;
-        if (isPsb) {
-            var psbOpts = new PhotoshopSaveOptions();
-            psbOpts.layers = true;
-            psbOpts.embedColorProfile = true;
-            doc.saveAs(file, psbOpts, true, Extension.LOWERCASE);
-        } else {
-            var psdOpts = new PhotoshopSaveOptions();
-            psdOpts.layers = true;
-            psdOpts.embedColorProfile = true;
-            doc.saveAs(file, psdOpts, true, Extension.LOWERCASE);
-        }
-    }
-
-    function safeCleanup(doc, opened, job, workName) {
+    function fileReady(f) {
         try {
-            closeJobDocument(doc, opened.template, job);
-        } catch (e1) {}
-        if (workName) {
-            try {
-                if (workName.indexOf("vu_") === 0) {
-                    closeDocByName(workName);
-                }
-            } catch (e2) {}
+            return f.exists && f.length > 0;
+        } catch (e) {
+            return f.exists;
         }
     }
 
-    function writeLog(jobPath, msg) {
-        try {
-            var f = new File(String(jobPath) + ".log");
-            f.encoding = "UTF-8";
-            f.open("a");
-            f.writeln(msg);
-            f.close();
-        } catch (e) {}
+    function outputsExist(psdFile, jpgFile) {
+        return fileReady(psdFile) && fileReady(jpgFile);
     }
 
     function main() {
@@ -561,6 +721,8 @@
         if (!jobPath) {
             throw new Error("OTRIS_JOB_PATH / OTRIS_JOB is not set");
         }
+        gJobLogPath = jobPath;
+        writeLog(jobPath, "jsx " + OTRIS_JSX_VERSION);
         var job = readJson(new File(jobPath));
         var templateFile = new File(job.template);
         var psdFile = new File(job.output_psd);
@@ -568,23 +730,30 @@
         var isPsb = job.output_is_psb === true || /\.psb$/i.test(job.template);
 
         var opened = openJobDocument(job, templateFile);
-        var doc = opened.work;
-        var workName = docName(doc);
+        var workName = opened.workName;
         var renderError = null;
 
         try {
-            applyJob(doc, job);
-            saveMaster(doc, psdFile, isPsb);
-            exportJpeg(doc, jpgFile);
+            if (!activateByName(workName)) {
+                throw new Error("Work document is not open: " + workName);
+            }
+            applyJob(app.activeDocument, job);
+            workName = saveMasterByName(workName, psdFile, isPsb, !opened.isDuplicate);
+            exportJpegByName(workName, jpgFile);
         } catch (e) {
             renderError = e;
             writeLog(jobPath, "render error: " + e);
         }
 
-        // Cleanup outside try/finally: PS 2026 throws Error 54 on stale handles.
-        safeCleanup(doc, opened, job, workName);
+        try {
+            if (opened.isDuplicate || !job.keep_template_open) {
+                closeByName(workName);
+            }
+        } catch (eClose) {
+            writeLog(jobPath, "close warn: " + eClose);
+        }
 
-        if (psdFile.exists && jpgFile.exists) {
+        if (outputsExist(psdFile, jpgFile)) {
             writeLog(jobPath, "ok");
             return;
         }
@@ -594,7 +763,17 @@
         throw new Error("Output files were not created: " + psdFile.fsName);
     }
 
-    app.displayDialogs = DialogModes.NO;
-    app.preferences.rulerUnits = Units.PIXELS;
-    main();
+    try {
+        app.displayDialogs = DialogModes.NO;
+        try {
+            app.playbackDisplayDialogs = DialogModes.NO;
+        } catch (ePd) {}
+        app.preferences.rulerUnits = Units.PIXELS;
+        main();
+    } catch (eMain) {
+        writeLog(gJobLogPath, "uncaught: " + eMain);
+        if (!gJobLogPath) {
+            throw eMain;
+        }
+    }
 })();

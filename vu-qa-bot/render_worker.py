@@ -68,7 +68,6 @@ def main() -> int:
     if recovered:
         log.warning("recovered %s stale job(s) from processing", recovered)
 
-    queue = RenderQueue(qdir)
     renderer = PhotoshopRenderer(RenderSettings.from_env())
     lock_file = lock_path()
 
@@ -103,10 +102,13 @@ def main() -> int:
     jobs_processed = 0
     last_heartbeat = 0.0
     log.info(
-        "worker %s started queue=%s photoshop=%s",
+        "worker %s started queue=%s photoshop=%s jsx=%s cache=%s cli=%s",
         worker_id,
         qdir,
         exe,
+        renderer.settings.jsx_path,
+        os.getenv("PHOTOSHOP_CACHE_TEMPLATE", "1"),
+        os.getenv("PHOTOSHOP_USE_CLI", "0"),
     )
 
     while True:

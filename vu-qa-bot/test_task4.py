@@ -53,6 +53,30 @@ class TestTask4Integration(unittest.TestCase):
         orig = MOCKUPS["original"].resolve_path()
         self.assertEqual(hand.name, orig.name)
 
+    def test_mockup_path_env_fallback(self):
+        custom = Path(self._tmpdir.name) / "shared.psb"
+        custom.write_bytes(b"x")
+        old_hand = os.environ.pop("MOCKUP_HAND_PATH", None)
+        old_orig = os.environ.pop("MOCKUP_ORIGINAL_PATH", None)
+        old_shared = os.environ.get("MOCKUP_PATH")
+        os.environ["MOCKUP_PATH"] = str(custom)
+        try:
+            self.assertEqual(MOCKUPS["hand"].resolve_path(), custom)
+            self.assertEqual(MOCKUPS["original"].resolve_path(), custom)
+        finally:
+            if old_hand is None:
+                os.environ.pop("MOCKUP_HAND_PATH", None)
+            else:
+                os.environ["MOCKUP_HAND_PATH"] = old_hand
+            if old_orig is None:
+                os.environ.pop("MOCKUP_ORIGINAL_PATH", None)
+            else:
+                os.environ["MOCKUP_ORIGINAL_PATH"] = old_orig
+            if old_shared is None:
+                os.environ.pop("MOCKUP_PATH", None)
+            else:
+                os.environ["MOCKUP_PATH"] = old_shared
+
     def test_scene_job_fields_hand(self):
         opts = RenderOptions(mockup="hand", background=5)
         fields = build_scene_job_fields(opts, load_template("mockup_hand"))
@@ -139,6 +163,67 @@ class TestTask4Integration(unittest.TestCase):
         )
         self.assertIsNone(n.portrait_path)
         self.assertFalse(n.generate_portrait)
+
+    def test_jsx_closes_by_name_not_stale_handle(self):
+        jsx = (Path(__file__).resolve().parent.parent / "photoshop" / "render.jsx").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("OTRIS_JSX_VERSION", jsx)
+        self.assertIn("function closeByName", jsx)
+        self.assertIn('stringIDToTypeID("close")', jsx)
+        self.assertNotIn("closeJobDocument(doc,", jsx)
+        self.assertIn("outputsExist(psdFile, jpgFile)", jsx)
+        self.assertIn("writeLog(jobPath, \"ok\")", jsx)
+        self.assertIn("duplicate(dupName, true)", jsx)
+        self.assertIn("SaveOptions.SAVECHANGES", jsx)
+        self.assertIn("closeActive(true)", jsx)
+
+    def test_wrapper_jsx_swallows_photoshop_errors(self):
+        from photoshop_renderer import PhotoshopRenderer, RenderSettings
+
+        jsx = Path(__file__).resolve().parent.parent / "photoshop" / "render.jsx"
+        out = Path(self._tmpdir.name) / "ps-out"
+        out.mkdir(parents=True, exist_ok=True)
+        renderer = PhotoshopRenderer(RenderSettings(jsx_path=jsx, output_dir=out))
+        job = out / "sample.job.json"
+        job.write_text("{}", encoding="utf-8")
+        wrapper = renderer._wrapper_jsx(job)
+        text = wrapper.read_text(encoding="utf-8")
+        self.assertIn("try {", text)
+        self.assertIn("wrapper catch:", text)
+        self.assertIn("$.evalFile(", text)
+
+    def test_resolve_jsx_existing(self):
+        from photoshop_renderer import _resolve_jsx
+
+        p = _resolve_jsx()
+        self.assertTrue(p.is_file(), p)
+
+    def test_outputs_ready_and_jsx_ok_log(self):
+        from photoshop_renderer import _jsx_reported_ok, _outputs_ready
+
+        d = Path(self._tmpdir.name)
+        psd = d / "a.psb"
+        jpg = d / "a.jpg"
+        self.assertFalse(_outputs_ready(psd, jpg))
+        psd.write_bytes(b"x")
+        jpg.write_bytes(b"y")
+        self.assertTrue(_outputs_ready(psd, jpg))
+        job = d / "a.job.json"
+        job.write_text("{}", encoding="utf-8")
+        (d / "a.job.json.log").write_text("close warn: x\nok\n", encoding="utf-8")
+        self.assertTrue(_jsx_reported_ok(job))
+
+    def test_wait_outputs_stable_size(self):
+        from photoshop_renderer import _wait_outputs
+
+        d = Path(self._tmpdir.name)
+        psd = d / "w.psb"
+        jpg = d / "w.jpg"
+        self.assertFalse(_wait_outputs(psd, jpg, timeout=0.5))
+        psd.write_bytes(b"x")
+        jpg.write_bytes(b"y")
+        self.assertTrue(_wait_outputs(psd, jpg, timeout=2))
 
     def test_queue_enqueue_with_scene(self):
         q = RenderQueue(Path(os.environ["RENDER_QUEUE_DIR"]))

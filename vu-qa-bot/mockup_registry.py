@@ -27,6 +27,10 @@ class MockupSpec:
         override = os.getenv(env_key, "").strip()
         if override:
             return Path(override)
+        if self.kind in {"hand", "original"}:
+            shared = os.getenv("MOCKUP_PATH", "").strip()
+            if shared:
+                return Path(shared)
         return ROOT / self.psb_name
 
 

@@ -44,6 +44,13 @@ class FontSpec:
 
 def fonts_dir() -> Path:
     raw = os.getenv("FONTS_DIR", "").strip()
+    candidates: list[Path] = []
+    if raw:
+        candidates.append(Path(raw))
+    candidates.append(DEFAULT_FONTS_DIR)
+    for p in candidates:
+        if (p / MANIFEST_NAME).is_file():
+            return p
     return Path(raw) if raw else DEFAULT_FONTS_DIR
 
 

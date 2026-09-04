@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import subprocess
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
@@ -42,7 +43,7 @@ class RenderSettings:
     def from_env(cls) -> RenderSettings:
         import os
 
-        jsx = Path(os.getenv("PHOTOSHOP_JSX", str(DEFAULT_JSX)))
+        jsx = _resolve_jsx()
         out = Path(os.getenv("RENDER_OUTPUT_DIR", str(ROOT / "output")))
         exe_raw = os.getenv("PHOTOSHOP_EXE", "").strip()
         exe = Path(exe_raw) if exe_raw else _find_photoshop()
@@ -55,6 +56,33 @@ def _find_photoshop() -> Path | None:
         if Path(candidate).is_file():
             return Path(candidate)
     return None
+
+
+def _resolve_jsx() -> Path:
+    """Use packaged render.jsx if it is newer than PHOTOSHOP_JSX (stale VPS copy)."""
+    env_raw = os.getenv("PHOTOSHOP_JSX", "").strip()
+    env_jsx = Path(env_raw) if env_raw else None
+    packaged = DEFAULT_JSX
+
+    if env_jsx and env_jsx.is_file():
+        try:
+            same = packaged.is_file() and env_jsx.resolve() == packaged.resolve()
+        except OSError:
+            same = False
+        if packaged.is_file() and not same:
+            if packaged.stat().st_mtime > env_jsx.stat().st_mtime:
+                log.warning(
+                    "PHOTOSHOP_JSX is older than packaged render.jsx (%s → %s)",
+                    env_jsx,
+                    packaged,
+                )
+                return packaged
+        return env_jsx
+    if packaged.is_file():
+        if env_jsx:
+            log.warning("PHOTOSHOP_JSX not found (%s), using %s", env_jsx, packaged)
+        return packaged
+    return env_jsx or packaged
 
 
 def _stamp() -> str:
@@ -78,6 +106,34 @@ def _format_ps_error(job_file: Path, err: Exception) -> str:
     if jsx_log:
         msg = f"{msg}\nJSX log ({_jsx_log_path(job_file).name}):\n{jsx_log}"
     return msg
+
+
+def _outputs_ready(*paths: Path) -> bool:
+    return all(p.is_file() and p.stat().st_size > 0 for p in paths)
+
+
+def _wait_outputs(*paths: Path, timeout: float = 8.0) -> bool:
+    """Wait until output files exist, have size, and size stops growing."""
+    start = time.time()
+    last: tuple[int, ...] | None = None
+    while time.time() - start < timeout:
+        if _outputs_ready(*paths):
+            sizes = tuple(p.stat().st_size for p in paths)
+            if last == sizes:
+                return True
+            last = sizes
+        else:
+            last = None
+        time.sleep(0.35)
+    return _outputs_ready(*paths)
+
+
+def _jsx_reported_ok(job_file: Path) -> bool:
+    log_text = _read_jsx_log(job_file)
+    if not log_text:
+        return False
+    lines = [ln.strip() for ln in log_text.splitlines() if ln.strip()]
+    return bool(lines) and lines[-1] == "ok"
 
 
 class PhotoshopRenderer:
@@ -121,7 +177,7 @@ class PhotoshopRenderer:
 
         try:
             job_data = build_photoshop_job(task, output_psd=psd_out, output_jpg=jpg_out)
-        except ValueError as e:
+        except (ValueError, FileNotFoundError, OSError) as e:
             return RenderResult(
                 job=RenderJob(record=None, text_block=task.text_block),
                 output_paths=[],
@@ -135,34 +191,37 @@ class PhotoshopRenderer:
         job_file.write_text(json.dumps(job_data, ensure_ascii=False, indent=2), encoding="utf-8")
 
         try:
-            self._run_photoshop(job_file)
+            self._run_photoshop(job_file, psd_out, jpg_out)
         except Exception as e:
-            outputs = [p for p in (psd_out, jpg_out) if p.is_file()]
-            if len(outputs) >= 2:
+            if _wait_outputs(psd_out, jpg_out, timeout=8) or _outputs_ready(psd_out, jpg_out):
                 log.warning("Photoshop reported error but output files exist: %s", e)
             else:
                 log.exception("Photoshop render failed")
                 return RenderResult(
                     job=RenderJob(record=None, text_block=task.text_block),
-                    output_paths=outputs,
+                    output_paths=[p for p in (psd_out, jpg_out) if p.is_file()],
                     status="error",
                     message=_format_ps_error(job_file, e),
                 )
 
-        outputs = [p for p in (psd_out, jpg_out) if p.is_file()]
-        if len(outputs) < 2:
+        if not _outputs_ready(psd_out, jpg_out):
+            _wait_outputs(psd_out, jpg_out, timeout=8)
+        if not _outputs_ready(psd_out, jpg_out):
             return RenderResult(
                 job=RenderJob(record=None, text_block=task.text_block),
-                output_paths=outputs,
+                output_paths=[p for p in (psd_out, jpg_out) if p.is_file()],
                 status="error",
-                message="Photoshop завершился без выходных файлов. Проверьте PHOTOSHOP_EXE.",
+                message=_format_ps_error(
+                    job_file,
+                    RuntimeError("Photoshop завершился без выходных файлов. Проверьте PHOTOSHOP_EXE."),
+                ),
             )
 
         task.psd_path = str(psd_out)
         task.jpg_path = str(jpg_out)
         return RenderResult(
             job=RenderJob(record=None, text_block=task.text_block),
-            output_paths=outputs,
+            output_paths=[psd_out, jpg_out],
             status="ok",
             message="Готово",
         )
@@ -186,86 +245,161 @@ class PhotoshopRenderer:
         )
         return self.render_task(task)
 
-    def _run_photoshop(self, job_file: Path) -> None:
+    def _run_photoshop(self, job_file: Path, psd_out: Path, jpg_out: Path) -> None:
         prefer_cli = os.getenv("PHOTOSHOP_USE_CLI", "0").strip().lower() in {
             "1",
             "true",
             "yes",
             "on",
         }
-        order = ("cli", "com") if prefer_cli else ("com", "cli")
         errors: list[str] = []
 
-        for mode in order:
-            try:
-                ok = self._run_via_cli(job_file) if mode == "cli" else self._run_via_com(job_file)
-                if ok:
+        def saved() -> bool:
+            return _wait_outputs(psd_out, jpg_out, timeout=8)
+
+        def run_cli() -> None:
+            if not self._run_via_cli(job_file, psd_out, jpg_out) and not saved():
+                raise RuntimeError("CLI finished without output files")
+
+        def run_com() -> bool:
+            """True if JS ran or files exist. False if COM cannot start Photoshop."""
+            return self._run_via_com(job_file, psd_out, jpg_out)
+
+        try:
+            if prefer_cli:
+                run_cli()
+                if saved():
                     return
-                errors.append(f"{mode}: failed without exception")
-            except Exception as e:
-                errors.append(f"{mode}: {e}")
-                log.warning("Photoshop %s failed: %s", mode, e)
+            else:
+                com_started = run_com()
+                if com_started:
+                    if saved():
+                        return
+                    raise RuntimeError("COM finished without output files")
+                run_cli()
+                if saved():
+                    return
+        except Exception as e:
+            if saved():
+                log.warning("Photoshop error after successful save: %s", e)
+                return
+            errors.append(str(e))
+            log.warning("Photoshop failed: %s", e)
+
+        if saved():
+            return
 
         jsx_log = _read_jsx_log(job_file)
-        detail = "; ".join(errors)
+        detail = "; ".join(errors) or "Photoshop render failed"
         if jsx_log:
             detail = f"{detail}\nJSX log:\n{jsx_log}"
-        raise RuntimeError(detail or "Photoshop render failed")
+        raise RuntimeError(detail)
 
     def _wrapper_jsx(self, job_file: Path) -> Path:
         job_path = str(job_file.resolve()).replace("\\", "/")
         jsx_main = str(self.settings.jsx_path.resolve()).replace("\\", "/")
         wrapper = job_file.with_suffix(".run.jsx")
         wrapper.write_text(
-            f'var OTRIS_JOB_PATH = "{job_path}";\n$.evalFile("{jsx_main}");\n',
+            "\n".join(
+                [
+                    "#target photoshop",
+                    f'var OTRIS_JOB_PATH = "{job_path}";',
+                    "try { app.displayDialogs = DialogModes.NO; } catch (e0) {}",
+                    "try {",
+                    f'    $.evalFile("{jsx_main}");',
+                    "} catch (e) {",
+                    "    try {",
+                    f'        var _f = new File("{job_path}.log");',
+                    '        _f.encoding = "UTF-8";',
+                    '        _f.open("a");',
+                    '        _f.writeln("wrapper catch: " + e);',
+                    "        _f.close();",
+                    "    } catch (e2) {}",
+                    "}",
+                    "",
+                ]
+            ),
             encoding="utf-8",
         )
         return wrapper
 
-    def _run_via_com(self, job_file: Path) -> bool:
+    def _run_via_com(self, job_file: Path, psd_out: Path, jpg_out: Path) -> bool:
+        """
+        Run JSX via Photoshop COM.
+        Returns False if COM/Photoshop cannot start (caller may try CLI).
+        Returns True if the script was invoked. Raises if invoked and files are missing.
+        """
         try:
             import win32com.client  # type: ignore[import-untyped]
         except ImportError:
             return False
 
-        wrapper = self._wrapper_jsx(job_file)
-        script = f'$.evalFile("{str(wrapper.resolve()).replace(chr(92), "/")}");'
-        ps = win32com.client.Dispatch("Photoshop.Application")
-        ps.DisplayDialogs = 3
-        ps.DoJavaScript(script)
-        return True
+        try:
+            ps = win32com.client.Dispatch("Photoshop.Application")
+        except Exception as e:
+            log.warning("Photoshop COM Dispatch failed: %s", e)
+            return False
 
-    def _run_via_cli(self, job_file: Path) -> bool:
+        wrapper = self._wrapper_jsx(job_file)
+        wrapper_js = str(wrapper.resolve()).replace("\\", "/")
+        try:
+            ps.DisplayDialogs = 3
+        except Exception:
+            pass
+
+        script = f'$.evalFile("{wrapper_js}");'
+        try:
+            try:
+                ps.DoJavaScript(script, None, 1)
+            except TypeError:
+                ps.DoJavaScript(script)
+        except Exception as e:
+            if _wait_outputs(psd_out, jpg_out, timeout=8) or (
+                _jsx_reported_ok(job_file) and _outputs_ready(psd_out, jpg_out)
+            ):
+                log.warning("Photoshop COM exception after save (ignored): %s", e)
+                return True
+            raise
+
+        if _wait_outputs(psd_out, jpg_out, timeout=8) or _outputs_ready(psd_out, jpg_out):
+            return True
+        raise RuntimeError("Photoshop COM finished without output files")
+
+    def _run_via_cli(self, job_file: Path, psd_out: Path, jpg_out: Path) -> bool:
         exe = self.settings.photoshop_exe
         if not exe or not exe.is_file():
             log.error("PHOTOSHOP_EXE not found for CLI mode")
             return False
         wrapper = self._wrapper_jsx(job_file)
         wrapper_s = str(wrapper.resolve())
-        # PS 2026: plain path often works better than -r on Windows Server.
-        attempts = (
-            [str(exe), wrapper_s],
-            [str(exe), "-r", wrapper_s],
-        )
-        last = ""
-        for args in attempts:
-            try:
-                r = subprocess.run(
-                    args,
-                    capture_output=True,
-                    text=True,
-                    timeout=900,
-                )
-                if r.returncode == 0:
-                    return True
-                last = (r.stderr or r.stdout or f"exit code {r.returncode}").strip()
-                log.error("Photoshop CLI %s -> %s", args, last[:800])
-            except Exception as e:
-                last = str(e)
-                log.error("Photoshop CLI exception: %s", e)
-        if last:
-            raise RuntimeError(last)
-        return False
+        args = [str(exe), "-r", wrapper_s]
+        started = time.time()
+        try:
+            r = subprocess.run(
+                args,
+                capture_output=True,
+                text=True,
+                timeout=900,
+            )
+            elapsed = time.time() - started
+            extra = 180.0 if r.returncode != 0 and elapsed < 8 else 8.0
+            if _wait_outputs(psd_out, jpg_out, timeout=extra) or _outputs_ready(psd_out, jpg_out):
+                if r.returncode != 0:
+                    log.warning(
+                        "Photoshop CLI exit %s after successful save",
+                        r.returncode,
+                    )
+                return True
+            last = (r.stderr or r.stdout or f"exit code {r.returncode}").strip()
+            log.error("Photoshop CLI %s -> %s", args, last[:800])
+            if last:
+                raise RuntimeError(last)
+        except Exception as e:
+            if _wait_outputs(psd_out, jpg_out, timeout=8) or _outputs_ready(psd_out, jpg_out):
+                log.warning("Photoshop CLI exception after save (ignored): %s", e)
+                return True
+            raise
+        return _outputs_ready(psd_out, jpg_out)
 
 
 def get_renderer() -> DocumentRenderer:
