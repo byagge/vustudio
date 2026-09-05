@@ -1,5 +1,5 @@
 #target photoshop
-var OTRIS_JSX_VERSION = "2026-09-05.3";
+var OTRIS_JSX_VERSION = "2026-09-05.4";
 
 (function () {
     if (typeof app === "undefined" || !app.documents) {
@@ -178,12 +178,16 @@ var OTRIS_JSX_VERSION = "2026-09-05.3";
     function updateNamedTextLayers(doc, byName) {
         var layers = [];
         collectTextLayers(doc, layers, false);
+        var hit = 0;
         for (var i = 0; i < layers.length; i++) {
             var layer = layers[i];
             if (byName.hasOwnProperty(layer.name)) {
                 setTextSafe(layer, byName[layer.name], true);
+                hit++;
             }
         }
+        writeLog(null, "text-by-name in '" + docName(doc) + "': layers=" + layers.length + " updated=" + hit);
+        return hit;
     }
 
     function updateTextGroupByIndex(doc, values, visibility) {
@@ -594,6 +598,117 @@ var OTRIS_JSX_VERSION = "2026-09-05.3";
         }
     }
 
+    function tempSoFile(layerName, ext) {
+        var safe = String(layerName || "so").replace(/[^a-zA-Z0-9_-]/g, "_");
+        if (safe.length > 40) {
+            safe = safe.substring(0, 40);
+        }
+        return new File(Folder.temp.fsName + "/vu_so_" + safe + "_" + (new Date().getTime()) + (ext || ".psb"));
+    }
+
+    function executePathAction(ids, file) {
+        for (var i = 0; i < ids.length; i++) {
+            try {
+                var desc = new ActionDescriptor();
+                desc.putPath(charIDToTypeID("null"), file);
+                executeAction(stringIDToTypeID(ids[i]), desc, DialogModes.NO);
+                return true;
+            } catch (e) {}
+        }
+        return false;
+    }
+
+    function exportSmartObjectContents(destFile) {
+        executePathAction(
+            ["placedLayerExportContents", "exportContents", "exportSmartObject"],
+            destFile
+        );
+        return destFile.exists && destFile.length > 0;
+    }
+
+    function replaceSmartObjectContents(srcFile) {
+        return executePathAction(
+            ["placedLayerReplaceContents", "placedLayerRelinkToFile", "placedLayerRelinkToFileWithParams"],
+            srcFile
+        );
+    }
+
+    function saveDocTo(file) {
+        try {
+            app.activeDocument.save();
+            if (file.exists && file.length > 0) {
+                return true;
+            }
+        } catch (e1) {}
+        try {
+            var opts = new PhotoshopSaveOptions();
+            opts.layers = true;
+            try {
+                opts.maximizeCompatibility = true;
+            } catch (eMc) {}
+            app.activeDocument.saveAs(file, opts, false, Extension.LOWERCASE);
+            return file.exists;
+        } catch (e2) {
+            try {
+                saveMasterAM(file, /\.psb$/i.test(file.name));
+                return file.exists;
+            } catch (e3) {
+                return false;
+            }
+        }
+    }
+
+    function editSmartObjectViaExport(layer, fn) {
+        var parentName = docName(app.activeDocument);
+        var layerName = "";
+        try {
+            layerName = String(layer.name);
+        } catch (eN) {}
+        if (!selectLayer(layer)) {
+            writeLog(null, "SO export: not selectable " + layerName);
+            return false;
+        }
+        var out = tempSoFile(layerName, ".psb");
+        if (!exportSmartObjectContents(out)) {
+            out = tempSoFile(layerName, ".psd");
+            if (!exportSmartObjectContents(out)) {
+                writeLog(null, "SO export failed: " + layerName);
+                return false;
+            }
+        }
+        writeLog(null, "SO exported " + layerName + " -> " + out.fsName + " (" + out.length + ")");
+        var openedName = "";
+        try {
+            app.open(out);
+            openedName = docName(app.activeDocument);
+            fn(app.activeDocument);
+            if (!saveDocTo(out)) {
+                throw new Error("could not save exported SO");
+            }
+            closeByName(openedName);
+            openedName = "";
+            if (!activateByName(parentName) || !selectLayer(layer)) {
+                throw new Error("lost parent after SO export edit");
+            }
+            if (!replaceSmartObjectContents(out)) {
+                throw new Error("placedLayerReplaceContents failed");
+            }
+            writeLog(null, "SO replaced: " + layerName);
+            return true;
+        } catch (e) {
+            writeLog(null, "SO export-edit failed (" + layerName + "): " + e);
+            if (openedName) {
+                closeByName(openedName);
+            }
+            activateByName(parentName);
+            return false;
+        } finally {
+            try {
+                out.remove();
+            } catch (eRm) {}
+        }
+    }
+
     function openSmartObject() {
         // PS 2026 often throws Error 54 AFTER the SO document is already open.
         var parentName = docName(app.activeDocument);
@@ -657,20 +772,30 @@ var OTRIS_JSX_VERSION = "2026-09-05.3";
         var opened = false;
         try {
             if (!openSmartObject()) {
-                writeLog(null, "smart object not editable: " + layerName);
+                writeLog(null, "Edit Contents unavailable, export/replace: " + layerName);
                 closeOrphans([parentName]);
                 activateByName(parentName);
+                if (!editSmartObjectViaExport(layer, fn)) {
+                    writeLog(null, "smart object not editable: " + layerName);
+                }
                 return;
             }
             innerName = docName(app.activeDocument);
             if (!innerName || innerName === parentName) {
-                writeLog(null, "smart object did not open: " + layerName);
+                writeLog(null, "smart object did not open, export/replace: " + layerName);
+                if (!editSmartObjectViaExport(layer, fn)) {
+                    writeLog(null, "smart object did not open: " + layerName);
+                }
                 return;
             }
             opened = true;
             fn(app.activeDocument);
         } catch (eEdit) {
             writeLog(null, "smart object failed (" + layerName + "): " + eEdit);
+            if (!opened) {
+                activateByName(parentName);
+                editSmartObjectViaExport(layer, fn);
+            }
         } finally {
             if (opened && innerName && innerName !== parentName && activateByName(innerName)) {
                 try {
@@ -761,13 +886,17 @@ var OTRIS_JSX_VERSION = "2026-09-05.3";
     }
 
     function applyJob(doc, job, depth) {
+        try {
+            app.activeDocument = doc;
+        } catch (eAct) {}
         applyMockupVariant(doc, job);
         var byName = job.layers_by_name || {};
-        updateNamedTextLayers(doc, byName);
+        var hits = updateNamedTextLayers(doc, byName);
         applyCategoryVisibility(doc, job.category_visibility || null, byName);
         updateTextGroupByIndex(doc, job.text_group_values || [], job.text_group_visibility || null);
         applyFontRules(doc, job);
         walkLayers(doc.layers, job, depth || 0);
+        writeLog(null, "applyJob depth=" + (depth || 0) + " doc='" + docName(doc) + "' namedHits=" + hits);
     }
 
     function saveMasterAM(file, isPsb) {

@@ -169,10 +169,12 @@ class TestTask4Integration(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn("OTRIS_JSX_VERSION", jsx)
-        self.assertIn("2026-09-05.3", jsx)
+        self.assertIn("2026-09-05.4", jsx)
         self.assertIn("smartObjectOpened", jsx)
         self.assertIn("closeOrphans", jsx)
         self.assertIn("isOrig || isHand", jsx)
+        self.assertIn("editSmartObjectViaExport", jsx)
+        self.assertIn("placedLayerReplaceContents", jsx)
         self.assertIn("function closeByName", jsx)
         self.assertIn('stringIDToTypeID("close")', jsx)
         self.assertNotIn("closeJobDocument(doc,", jsx)
