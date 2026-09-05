@@ -253,8 +253,16 @@ class PhotoshopRenderer:
             "on",
         }
         errors: list[str] = []
+        waited = False
 
         def saved() -> bool:
+            """Files present and no longer growing. Waits the full grace period once."""
+            nonlocal waited
+            if _outputs_ready(psd_out, jpg_out):
+                return _wait_outputs(psd_out, jpg_out, timeout=60)
+            if waited:
+                return False
+            waited = True
             return _wait_outputs(psd_out, jpg_out, timeout=8)
 
         def run_cli() -> None:
