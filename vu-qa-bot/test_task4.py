@@ -100,6 +100,12 @@ class TestTask4Integration(unittest.TestCase):
         self.assertEqual(job["background"], 7)
         self.assertIn("hand_group", job["scene"])
         self.assertIn("fonts", job)
+        self.assertIn("blank_template", job)
+        self.assertIn("УИК", job["layers_by_name"])
+        self.assertIn("АБСАЛЯМОВ", job["layers_by_name"])
+        self.assertEqual(job["layers_by_name"]["УИК"], "АБСАЛЯМОВ")
+        self.assertEqual(job["layers_by_name"]["АБСАЛЯМОВ"], "АБСАЛЯМОВ")
+        self.assertEqual(job["blank_layers_by_name"]["АБСАЛЯМОВ"], "АБСАЛЯМОВ")
 
     def test_template_cache_flags(self):
         job = {"template": "/mock/hand.psb"}
@@ -169,7 +175,11 @@ class TestTask4Integration(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn("OTRIS_JSX_VERSION", jsx)
-        self.assertIn("2026-09-05.4", jsx)
+        self.assertIn("2026-09-05.5", jsx)
+        self.assertIn("renderBlankCard", jsx)
+        self.assertIn("replaceCardSmartObjects", jsx)
+        self.assertIn("defer card SO to replace", jsx)
+        self.assertIn("blank_template=", jsx)
         self.assertIn("smartObjectOpened", jsx)
         self.assertIn("closeOrphans", jsx)
         self.assertIn("isOrig || isHand", jsx)

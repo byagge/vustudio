@@ -1,5 +1,5 @@
 #target photoshop
-var OTRIS_JSX_VERSION = "2026-09-05.4";
+var OTRIS_JSX_VERSION = "2026-09-05.5";
 
 (function () {
     if (typeof app === "undefined" || !app.documents) {
@@ -869,6 +869,8 @@ var OTRIS_JSX_VERSION = "2026-09-05.4";
                         editSmartObject(layer, function (innerDoc) {
                             applyBackground(innerDoc, job);
                         });
+                    } else if (job.blank_template && isCardSmartObject(layer, job)) {
+                        writeLog(null, "defer card SO to replace: " + layer.name);
                     } else {
                         try {
                             layer.visible = true;
@@ -883,6 +885,131 @@ var OTRIS_JSX_VERSION = "2026-09-05.4";
                 }
             }
         }
+    }
+
+    function applyTextMaps(doc, byName, textVals, textVis, catVis, job) {
+        try {
+            app.activeDocument = doc;
+        } catch (eAct) {}
+        var hits = updateNamedTextLayers(doc, byName || {});
+        applyCategoryVisibility(doc, catVis || null, byName || {});
+        updateTextGroupByIndex(doc, textVals || [], textVis || null);
+        applyFontRules(doc, job);
+        writeLog(null, "applyTextMaps '" + docName(doc) + "' namedHits=" + hits);
+        return hits;
+    }
+
+    function isCardSmartObject(layer, job) {
+        var scene = job.scene || {};
+        var n = "";
+        try {
+            n = String(layer.name);
+        } catch (e) {
+            return false;
+        }
+        if (scene.photo_smart_object && n === scene.photo_smart_object) {
+            return false;
+        }
+        if (scene.background_smart_object && n === scene.background_smart_object) {
+            return false;
+        }
+        if (n === "Text" || n === "text" || n === "TEXT") {
+            return true;
+        }
+        if (/бланк|прямоугольник|card|licence|license|ву\b|front|док/i.test(n)) {
+            return true;
+        }
+        return false;
+    }
+
+    function logSmartObjects(container, prefix) {
+        var layers = container.layers;
+        for (var i = 0; i < layers.length; i++) {
+            var layer = layers[i];
+            var path = prefix ? prefix + "/" + layer.name : layer.name;
+            if (layer.typename === "LayerSet") {
+                logSmartObjects(layer, path);
+            } else if (layer.typename === "ArtLayer" && isSmartObject(layer)) {
+                writeLog(null, "SO " + path + " vis=" + isVisible(layer));
+            }
+        }
+    }
+
+    function renderBlankCard(job) {
+        if (!job.blank_template) {
+            return null;
+        }
+        var src = new File(job.blank_template);
+        if (!src.exists) {
+            writeLog(null, "blank_template missing: " + job.blank_template);
+            return null;
+        }
+        var tmp = new File(Folder.temp.fsName + "/vu_card_" + String(job.job_id || "x") + "_" + (new Date().getTime()) + ".psd");
+        var name = "";
+        try {
+            app.open(src);
+            name = docName(app.activeDocument);
+            var hits = applyTextMaps(
+                app.activeDocument,
+                job.blank_layers_by_name || job.layers_by_name,
+                job.blank_text_group_values || job.text_group_values,
+                job.blank_text_group_visibility || job.text_group_visibility,
+                job.category_visibility,
+                job
+            );
+            if (hits < 1) {
+                writeLog(null, "blank card namedHits=0 — check layer names");
+            }
+            var saved = false;
+            try {
+                saveMasterAM(tmp, false);
+                saved = tmp.exists && tmp.length > 0;
+            } catch (eAm) {
+                writeLog(null, "blank save AM: " + eAm);
+            }
+            if (!saved) {
+                try {
+                    saveMasterDom(tmp);
+                    saved = tmp.exists && tmp.length > 0;
+                } catch (eDom) {
+                    writeLog(null, "blank save DOM: " + eDom);
+                }
+            }
+            if (!saved) {
+                throw new Error("blank card save failed");
+            }
+            writeLog(null, "blank card " + tmp.fsName + " bytes=" + tmp.length + " hits=" + hits);
+            return tmp;
+        } catch (e) {
+            writeLog(null, "blank card failed: " + e);
+            return null;
+        } finally {
+            closeByName(name);
+        }
+    }
+
+    function replaceCardSmartObjects(container, cardFile, job) {
+        var n = 0;
+        function walk(layers) {
+            for (var i = 0; i < layers.length; i++) {
+                var layer = layers[i];
+                if (layer.typename === "LayerSet") {
+                    walk(layer.layers);
+                } else if (layer.typename === "ArtLayer" && isSmartObject(layer) && isCardSmartObject(layer, job)) {
+                    try {
+                        layer.visible = true;
+                    } catch (eVis) {}
+                    if (selectLayer(layer) && replaceSmartObjectContents(cardFile)) {
+                        writeLog(null, "replaced card SO: " + layer.name);
+                        n++;
+                    } else {
+                        writeLog(null, "replace card SO failed: " + layer.name);
+                    }
+                }
+            }
+        }
+        walk(container.layers);
+        return n;
     }
 
     function applyJob(doc, job, depth) {
@@ -1076,6 +1203,7 @@ var OTRIS_JSX_VERSION = "2026-09-05.4";
         gJobLogPath = jobPath;
         writeLog(jobPath, "jsx " + OTRIS_JSX_VERSION);
         var job = readJson(new File(jobPath));
+        writeLog(jobPath, "blank_template=" + (job.blank_template || ""));
         var templateFile = new File(job.template);
         var psdFile = new File(job.output_psd);
         var jpgFile = new File(job.output_jpg);
@@ -1092,7 +1220,24 @@ var OTRIS_JSX_VERSION = "2026-09-05.4";
             if (!activateByName(workName)) {
                 throw new Error("Work document is not open: " + workName);
             }
+            logSmartObjects(app.activeDocument, "");
             applyJob(app.activeDocument, job, 0);
+            if (job.blank_template && job.template_name !== "mockup_blank") {
+                var cardFile = renderBlankCard(job);
+                if (cardFile) {
+                    if (!activateByName(workName)) {
+                        throw new Error("Work document lost after blank card");
+                    }
+                    var replaced = replaceCardSmartObjects(app.activeDocument, cardFile, job);
+                    writeLog(jobPath, "card SO replacements: " + replaced);
+                    if (replaced < 1) {
+                        writeLog(jobPath, "no card SO replaced — see SO list above");
+                    }
+                    try {
+                        cardFile.remove();
+                    } catch (eRm) {}
+                }
+            }
             closeOrphans();
             if (!activateByName(workName)) {
                 throw new Error("Work document lost after applyJob");

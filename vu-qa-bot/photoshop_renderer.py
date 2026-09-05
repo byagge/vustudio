@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import subprocess
 import time
 import uuid
@@ -58,6 +59,15 @@ def _find_photoshop() -> Path | None:
     return None
 
 
+def _jsx_version(path: Path) -> str:
+    try:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return ""
+    match = re.search(r'OTRIS_JSX_VERSION\s*=\s*"([^"]+)"', text)
+    return match.group(1) if match else ""
+
+
 def _resolve_jsx() -> Path:
     """Use packaged render.jsx if it is newer than PHOTOSHOP_JSX (stale VPS copy)."""
     env_raw = os.getenv("PHOTOSHOP_JSX", "").strip()
@@ -70,6 +80,17 @@ def _resolve_jsx() -> Path:
         except OSError:
             same = False
         if packaged.is_file() and not same:
+            pkg_ver = _jsx_version(packaged)
+            env_ver = _jsx_version(env_jsx)
+            if pkg_ver and pkg_ver != env_ver:
+                log.warning(
+                    "PHOTOSHOP_JSX version %s != packaged %s (%s → %s)",
+                    env_ver or "?",
+                    pkg_ver,
+                    env_jsx,
+                    packaged,
+                )
+                return packaged
             if packaged.stat().st_mtime > env_jsx.stat().st_mtime:
                 log.warning(
                     "PHOTOSHOP_JSX is older than packaged render.jsx (%s → %s)",

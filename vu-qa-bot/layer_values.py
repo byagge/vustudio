@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from font_registry import build_font_job_fields
-from mockup_registry import get_mockup
+from mockup_registry import ROOT, get_mockup
 from mockup_scene import build_scene_job_fields, validate_scene_options
 from portrait_service import portrait_job_payload
 from render_models import RenderOptions, RenderTask, block_to_dict
@@ -23,6 +23,23 @@ from text_realism import (
 
 # Алиас из task2.md §3 (layer_values.field_values)
 field_values = build_layer_values
+
+
+def layers_by_name_for_template(block: VuTextBlock, tpl: dict) -> dict[str, str]:
+    values = build_layer_values(block, tpl)
+    layers_map = tpl.get("field_layers") or {}
+    return {layers_map[key]: values[key] for key in layers_map if key in values}
+
+
+def resolve_blank_template_path() -> Path:
+    spec = get_mockup("blank")
+    path = spec.resolve_path()
+    if path.is_file():
+        return path
+    fallback = ROOT / spec.psb_name
+    if fallback.is_file():
+        return fallback
+    return path
 
 
 def load_template(name: str = "mockup_hand") -> dict:
@@ -79,6 +96,25 @@ def build_photoshop_job(task: RenderTask, *, output_psd: Path, output_jpg: Path)
     mockup = get_mockup(task.options.mockup)
     template = load_template(mockup.template)
     template_path = mockup.resolve_path()
+    blank_tpl = load_template("mockup_blank")
+    blank_path = resolve_blank_template_path()
+    blank_map = layers_by_name_for_template(block, blank_tpl)
+    blank_tg, blank_tg_vis = build_text_group(block, blank_tpl)
+
+    payload = build_render_payload(
+        block,
+        template,
+        options=task.options,
+        portrait_path=task.options.portrait_path,
+    )
+    # Hand SO uses «УИК», blank uses «АБСАЛЯМОВ» — keep both maps so either document updates.
+    merged = dict(blank_map)
+    merged.update(payload.get("layers_by_name") or {})
+    payload["layers_by_name"] = merged
+    payload["blank_template"] = str(blank_path.resolve()) if blank_path.is_file() else ""
+    payload["blank_layers_by_name"] = blank_map
+    payload["blank_text_group_values"] = blank_tg
+    payload["blank_text_group_visibility"] = blank_tg_vis
 
     return {
         "job_id": task.job_id,
@@ -87,10 +123,5 @@ def build_photoshop_job(task: RenderTask, *, output_psd: Path, output_jpg: Path)
         "output_jpg": str(output_jpg.resolve()),
         "output_is_psb": template_path.suffix.lower() == ".psb",
         "fields": block_to_dict(block),
-        **build_render_payload(
-            block,
-            template,
-            options=task.options,
-            portrait_path=task.options.portrait_path,
-        ),
+        **payload,
     }
