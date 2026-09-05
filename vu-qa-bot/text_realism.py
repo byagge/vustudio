@@ -9,7 +9,7 @@ from typing import Any
 from text_parser import BackTableRow, VuTextBlock
 
 DATE_RE = re.compile(r"^\d{2}\.\d{2}\.\d{4}$")
-_CAT_FIELDS = {"cat_b": "B", "cat_b1": "B1", "cat_m": "M"}
+_CAT_FIELDS = {"cat_a": "A", "cat_b": "B", "cat_b1": "B1", "cat_m": "M"}
 
 
 def _authority_lat(authority: str) -> str:
@@ -167,6 +167,7 @@ def build_layer_values(block: VuTextBlock, tpl: dict[str, Any]) -> dict[str, str
         "birth_place_lat": block.birth_place_lat,
         "authority_lat": block.authority,
         "residence_lat": block.residence_lat,
+        "cat_a": "a" if "A" in cats else "",
         "cat_b": "b" if "B" in cats else "",
         "cat_b1": "b1" if "B1" in cats else "",
         "cat_m": "m" if "M" in cats else "",

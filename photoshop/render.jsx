@@ -1,5 +1,5 @@
 #target photoshop
-var OTRIS_JSX_VERSION = "2026-09-05.5";
+var OTRIS_JSX_VERSION = "2026-09-05.8";
 
 (function () {
     if (typeof app === "undefined" || !app.documents) {
@@ -39,13 +39,62 @@ var OTRIS_JSX_VERSION = "2026-09-05.5";
         } catch (e) {}
     }
 
+    function mapHas(obj, key) {
+        if (!obj || key === undefined || key === null) {
+            return false;
+        }
+        try {
+            return obj[key] !== undefined && obj[key] !== null;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function mapGet(obj, key) {
+        try {
+            return obj[key];
+        } catch (e) {
+            return undefined;
+        }
+    }
+
+    function isTextLayer(layer) {
+        try {
+            if (layer.typename !== "ArtLayer") {
+                return false;
+            }
+        } catch (eType) {
+            return false;
+        }
+        try {
+            return layer.kind === LayerKind.TEXT;
+        } catch (eKind) {
+            try {
+                return layer.textItem !== null && layer.textItem !== undefined;
+            } catch (eTi) {
+                return false;
+            }
+        }
+    }
+
     function collectTextLayers(container, out, directOnly) {
-        var layers = container.layers;
+        var layers;
+        try {
+            layers = container.layers;
+        } catch (eLayers) {
+            return;
+        }
         for (var i = layers.length - 1; i >= 0; i--) {
             var layer = layers[i];
-            if (layer.typename === "ArtLayer" && layer.kind === LayerKind.TEXT) {
+            var typename = "";
+            try {
+                typename = layer.typename;
+            } catch (eType) {
+                continue;
+            }
+            if (isTextLayer(layer)) {
                 out.push(layer);
-            } else if (!directOnly && layer.typename === "LayerSet") {
+            } else if (!directOnly && typename === "LayerSet") {
                 collectTextLayers(layer, out, false);
             }
         }
@@ -68,51 +117,101 @@ var OTRIS_JSX_VERSION = "2026-09-05.5";
         return null;
     }
 
-    function setTextPreserveStyle(layer, text, visible) {
-        if (visible === false || text === null || text === undefined || text === "") {
-            layer.visible = false;
-            return;
+    function setTextViaAM(layer, text) {
+        if (!selectLayer(layer)) {
+            return false;
         }
-        layer.visible = true;
-        var ti = layer.textItem;
-        var oldText = ti.contents;
-        var oldSize = ti.size;
-        var oldFont = ti.font;
-        var oldTracking = ti.tracking;
-        var newText = String(text);
-
-        try {
-            ti.contents = newText;
-        } catch (e1) {
+        var value = String(text);
+        var methods = [
+            function () {
+                var desc = new ActionDescriptor();
+                var ref = new ActionReference();
+                ref.putEnumerated(charIDToTypeID("TxLr"), charIDToTypeID("Ordn"), charIDToTypeID("Trgt"));
+                desc.putReference(charIDToTypeID("null"), ref);
+                var tDesc = new ActionDescriptor();
+                tDesc.putString(charIDToTypeID("Txt "), value);
+                desc.putObject(charIDToTypeID("T   "), charIDToTypeID("TxLr"), tDesc);
+                executeAction(charIDToTypeID("setd"), desc, DialogModes.NO);
+            },
+            function () {
+                var desc = new ActionDescriptor();
+                var ref = new ActionReference();
+                ref.putIdentifier(charIDToTypeID("Lyr "), layer.id);
+                desc.putReference(charIDToTypeID("null"), ref);
+                var tDesc = new ActionDescriptor();
+                tDesc.putString(charIDToTypeID("Txt "), value);
+                desc.putObject(charIDToTypeID("T   "), charIDToTypeID("TxLr"), tDesc);
+                executeAction(charIDToTypeID("setd"), desc, DialogModes.NO);
+            }
+        ];
+        for (var i = 0; i < methods.length; i++) {
             try {
-                ti.contents = newText.substring(0, 200);
-            } catch (e2) {
+                methods[i]();
+                return true;
+            } catch (e) {}
+        }
+        return false;
+    }
+
+    function setTextPreserveStyle(layer, text, visible) {
+        try {
+            if (visible === false || text === null || text === undefined || text === "") {
+                layer.visible = false;
                 return;
             }
-        }
-
+        } catch (eVis) {}
         try {
-            ti.font = oldFont;
-        } catch (e3) {}
+            layer.visible = true;
+        } catch (eShow) {}
 
-        if (newText.length > oldText.length * 1.2 && oldText.length > 0) {
-            try {
-                var ratio = oldText.length / newText.length;
-                ti.size = Math.max(oldSize * ratio * 0.96, oldSize * 0.72);
-            } catch (e4) {}
-        } else {
-            try {
-                ti.size = oldSize;
-            } catch (e5) {}
-        }
-
+        var newText = String(text);
+        var wrote = false;
         try {
-            ti.tracking = oldTracking;
-        } catch (e6) {}
+            var ti = layer.textItem;
+            var oldText = "";
+            var oldSize = null;
+            var oldFont = null;
+            var oldTracking = null;
+            try { oldText = String(ti.contents); } catch (eC) {}
+            try { oldSize = ti.size; } catch (eS) {}
+            try { oldFont = ti.font; } catch (eF) {}
+            try { oldTracking = ti.tracking; } catch (eT) {}
+            try {
+                ti.contents = newText;
+                wrote = true;
+            } catch (e1) {
+                try {
+                    ti.contents = newText.substring(0, 200);
+                    wrote = true;
+                } catch (e2) {}
+            }
+            if (wrote) {
+                try { if (oldFont) ti.font = oldFont; } catch (e3) {}
+                try {
+                    if (oldSize && oldText && newText.length > oldText.length * 1.2) {
+                        ti.size = Math.max(oldSize * (oldText.length / newText.length) * 0.96, oldSize * 0.72);
+                    } else if (oldSize) {
+                        ti.size = oldSize;
+                    }
+                } catch (e4) {}
+                try { if (oldTracking !== null) ti.tracking = oldTracking; } catch (e5) {}
+                return;
+            }
+        } catch (eDom) {}
+
+        if (!setTextViaAM(layer, newText)) {
+            throw new Error("setText failed on '" + layer.name + "'");
+        }
     }
 
     function setTextSafe(layer, text, visible) {
-        setTextPreserveStyle(layer, text, visible);
+        try {
+            setTextPreserveStyle(layer, text, visible);
+            return true;
+        } catch (e) {
+            writeLog(null, "setText skip '" + layer.name + "': " + e);
+            return false;
+        }
     }
 
     function setLayerFont(layer, psName, job) {
@@ -157,8 +256,8 @@ var OTRIS_JSX_VERSION = "2026-09-05.5";
             collectTextLayers(doc, layers, false);
             for (var i = 0; i < layers.length; i++) {
                 var layer = layers[i];
-                if (byName.hasOwnProperty(layer.name)) {
-                    setLayerFont(layer, byName[layer.name], job);
+                if (mapHas(byName, layer.name)) {
+                    setLayerFont(layer, mapGet(byName, layer.name), job);
                 }
             }
         }
@@ -175,15 +274,85 @@ var OTRIS_JSX_VERSION = "2026-09-05.5";
         }
     }
 
-    function updateNamedTextLayers(doc, byName) {
+    function logDocLayers(doc, tag) {
+        try {
+            var layers = doc.layers;
+            writeLog(null, tag + " '" + docName(doc) + "' count=" + layers.length);
+            var n = layers.length > 40 ? 40 : layers.length;
+            for (var i = 0; i < n; i++) {
+                var layer = layers[i];
+                var info = "";
+                try {
+                    info += layer.name;
+                } catch (eN) {
+                    info += "?";
+                }
+                try {
+                    info += " " + layer.typename;
+                } catch (eT) {}
+                try {
+                    info += " kind=" + layer.kind;
+                } catch (eK) {
+                    info += " kind=?";
+                }
+                if (isSmartObject(layer)) {
+                    info += " SO";
+                }
+                writeLog(null, "  L " + info);
+            }
+        } catch (e) {
+            writeLog(null, tag + " list failed: " + e);
+        }
+    }
+
+    function lookupReplacement(byName, replacements, layer) {
+        var nm = "";
+        var contents = "";
+        try {
+            nm = String(layer.name);
+        } catch (eN) {}
+        try {
+            contents = String(layer.textItem.contents);
+        } catch (eC) {}
+        if (nm && mapHas(byName, nm)) {
+            return mapGet(byName, nm);
+        }
+        if (contents && mapHas(byName, contents)) {
+            return mapGet(byName, contents);
+        }
+        if (replacements) {
+            for (var i = 0; i < replacements.length; i++) {
+                var row = replacements[i];
+                if (!row) {
+                    continue;
+                }
+                if ((nm && row.name === nm) || (contents && (row.old === contents || row.name === contents))) {
+                    return row.value;
+                }
+            }
+        }
+        return null;
+    }
+
+    function updateNamedTextLayers(doc, byName, replacements) {
         var layers = [];
         collectTextLayers(doc, layers, false);
         var hit = 0;
         for (var i = 0; i < layers.length; i++) {
             var layer = layers[i];
-            if (byName.hasOwnProperty(layer.name)) {
-                setTextSafe(layer, byName[layer.name], true);
+            var value = lookupReplacement(byName || {}, replacements, layer);
+            if (value === null || value === undefined) {
+                continue;
+            }
+            var nm = "";
+            try {
+                nm = String(layer.name);
+            } catch (eN) {
+                nm = "?";
+            }
+            if (setTextSafe(layer, value, true)) {
                 hit++;
+                writeLog(null, "set [" + nm + "] => " + value);
             }
         }
         writeLog(null, "text-by-name in '" + docName(doc) + "': layers=" + layers.length + " updated=" + hit);
@@ -225,7 +394,7 @@ var OTRIS_JSX_VERSION = "2026-09-05.5";
             return;
         }
         for (var layerName in catVis) {
-            if (!catVis.hasOwnProperty(layerName)) {
+            if (!mapHas(catVis, layerName)) {
                 continue;
             }
             var layer = findLayerByName(doc, layerName);
@@ -234,8 +403,8 @@ var OTRIS_JSX_VERSION = "2026-09-05.5";
             }
             if (catVis[layerName]) {
                 layer.visible = true;
-                if (byName && byName.hasOwnProperty(layerName)) {
-                    setTextSafe(layer, byName[layerName], true);
+                if (byName && mapHas(byName, layerName)) {
+                    setTextSafe(layer, mapGet(byName, layerName), true);
                 }
             } else {
                 layer.visible = false;
@@ -270,6 +439,47 @@ var OTRIS_JSX_VERSION = "2026-09-05.5";
             } catch (e) {}
         }
         return null;
+    }
+
+    function openFileResilient(file) {
+        var existing = findOpenDoc(file.fsName);
+        if (existing) {
+            try {
+                app.activeDocument = existing;
+            } catch (eAct) {}
+            writeLog(null, "reused open " + docName(existing));
+            return docName(existing);
+        }
+        var before = app.documents.length;
+        try {
+            app.open(file);
+        } catch (eOpen) {
+            if (app.documents.length <= before && !findOpenDoc(file.fsName)) {
+                throw eOpen;
+            }
+            writeLog(null, "open despite: " + eOpen);
+        }
+        existing = findOpenDoc(file.fsName);
+        if (existing) {
+            try {
+                app.activeDocument = existing;
+            } catch (eAct2) {}
+            return docName(existing);
+        }
+        return docName(app.activeDocument);
+    }
+
+    function closeCachedTemplate(job) {
+        if (!job || !job.template) {
+            return;
+        }
+        var existing = findOpenDoc(job.template);
+        if (!existing) {
+            return;
+        }
+        var n = docName(existing);
+        writeLog(null, "closing cached template before blank: " + n);
+        closeByName(n);
     }
 
     function docExists(name) {
@@ -748,7 +958,10 @@ var OTRIS_JSX_VERSION = "2026-09-05.5";
         return false;
     }
 
-    function editSmartObject(layer, fn) {
+    function editSmartObject(layer, fn, allowExport) {
+        if (allowExport !== false) {
+            allowExport = true;
+        }
         var parentName = docName(app.activeDocument);
         var layerName = "";
         try {
@@ -775,24 +988,26 @@ var OTRIS_JSX_VERSION = "2026-09-05.5";
                 writeLog(null, "Edit Contents unavailable, export/replace: " + layerName);
                 closeOrphans([parentName]);
                 activateByName(parentName);
-                if (!editSmartObjectViaExport(layer, fn)) {
-                    writeLog(null, "smart object not editable: " + layerName);
+                if (allowExport && editSmartObjectViaExport(layer, fn)) {
+                    return;
                 }
+                writeLog(null, "smart object not editable: " + layerName);
                 return;
             }
             innerName = docName(app.activeDocument);
             if (!innerName || innerName === parentName) {
                 writeLog(null, "smart object did not open, export/replace: " + layerName);
-                if (!editSmartObjectViaExport(layer, fn)) {
-                    writeLog(null, "smart object did not open: " + layerName);
+                if (allowExport && editSmartObjectViaExport(layer, fn)) {
+                    return;
                 }
+                writeLog(null, "smart object did not open: " + layerName);
                 return;
             }
             opened = true;
             fn(app.activeDocument);
         } catch (eEdit) {
             writeLog(null, "smart object failed (" + layerName + "): " + eEdit);
-            if (!opened) {
+            if (!opened && allowExport) {
                 activateByName(parentName);
                 editSmartObjectViaExport(layer, fn);
             }
@@ -869,8 +1084,27 @@ var OTRIS_JSX_VERSION = "2026-09-05.5";
                         editSmartObject(layer, function (innerDoc) {
                             applyBackground(innerDoc, job);
                         });
-                    } else if (job.blank_template && isCardSmartObject(layer, job)) {
-                        writeLog(null, "defer card SO to replace: " + layer.name);
+                    } else if (isCardSmartObject(layer, job)) {
+                        if (job._cardFile) {
+                            try {
+                                layer.visible = true;
+                            } catch (eShow) {}
+                            if (selectLayer(layer) && replaceSmartObjectContents(job._cardFile)) {
+                                writeLog(null, "replaced card SO: " + layer.name);
+                                job._cardReplaced = (job._cardReplaced || 0) + 1;
+                            } else {
+                                writeLog(null, "replace card SO failed: " + layer.name);
+                            }
+                        } else {
+                            writeLog(null, "defer card SO to replace: " + layer.name);
+                        }
+                    } else if (isWrapperSmartObject(layer, job)) {
+                        writeLog(null, "enter wrapper SO: " + layer.name);
+                        editSmartObject(layer, function (innerDoc) {
+                            applyJob(innerDoc, job, depth + 1);
+                        }, false);
+                    } else if (job.blank_template) {
+                        writeLog(null, "skip chrome SO: " + layer.name);
                     } else {
                         try {
                             layer.visible = true;
@@ -887,16 +1121,104 @@ var OTRIS_JSX_VERSION = "2026-09-05.5";
         }
     }
 
-    function applyTextMaps(doc, byName, textVals, textVis, catVis, job) {
+    function applyTextMaps(doc, byName, textVals, textVis, catVis, job, replacements) {
         try {
             app.activeDocument = doc;
         } catch (eAct) {}
-        var hits = updateNamedTextLayers(doc, byName || {});
-        applyCategoryVisibility(doc, catVis || null, byName || {});
-        updateTextGroupByIndex(doc, textVals || [], textVis || null);
-        applyFontRules(doc, job);
+        logDocLayers(doc, "card layers");
+        var hits = 0;
+        try {
+            hits = updateNamedTextLayers(doc, byName || {}, replacements);
+        } catch (eName) {
+            writeLog(null, "updateNamedTextLayers: " + eName);
+        }
+        try {
+            applyCategoryVisibility(doc, catVis || null, byName || {});
+        } catch (eCat) {
+            writeLog(null, "applyCategoryVisibility: " + eCat);
+        }
+        try {
+            updateTextGroupByIndex(doc, textVals || [], textVis || null);
+        } catch (eGrp) {
+            writeLog(null, "updateTextGroupByIndex: " + eGrp);
+        }
+        try {
+            applyFontRules(doc, job);
+        } catch (eFont) {
+            writeLog(null, "applyFontRules: " + eFont);
+        }
         writeLog(null, "applyTextMaps '" + docName(doc) + "' namedHits=" + hits);
         return hits;
+    }
+
+    function applyTextMapsDeep(doc, byName, textVals, textVis, catVis, job, replacements, depth) {
+        if (depth > 5) {
+            return 0;
+        }
+        var hits = applyTextMaps(doc, byName, textVals, textVis, catVis, job, replacements);
+        function walk(layers) {
+            for (var i = 0; i < layers.length; i++) {
+                var layer = layers[i];
+                var typename = "";
+                try {
+                    typename = layer.typename;
+                } catch (eT) {
+                    continue;
+                }
+                if (typename === "LayerSet") {
+                    walk(layer.layers);
+                } else if (typename === "ArtLayer" && isSmartObject(layer)) {
+                    writeLog(null, "blank inner SO: " + layer.name);
+                    editSmartObject(layer, function (innerDoc) {
+                        hits += applyTextMapsDeep(
+                            innerDoc,
+                            byName,
+                            textVals,
+                            textVis,
+                            catVis,
+                            job,
+                            replacements,
+                            depth + 1
+                        );
+                    }, true);
+                }
+            }
+        }
+        try {
+            walk(doc.layers);
+        } catch (eW) {
+            writeLog(null, "deep walk: " + eW);
+        }
+        return hits;
+    }
+
+    function isWrapperSmartObject(layer, job) {
+        if (isCardSmartObject(layer, job)) {
+            return false;
+        }
+        var scene = job.scene || {};
+        var n = "";
+        try {
+            n = String(layer.name);
+        } catch (e) {
+            return false;
+        }
+        if (scene.photo_smart_object && n === scene.photo_smart_object) {
+            return false;
+        }
+        if (scene.background_smart_object && n === scene.background_smart_object) {
+            return false;
+        }
+        if (scene.original_layer && n === scene.original_layer) {
+            return false;
+        }
+        if (n === "Слой 0 копия" || n.indexOf("Группа смарт-объектов") !== -1) {
+            return true;
+        }
+        if (n.indexOf("Слой 0") === 0) {
+            return true;
+        }
+        return false;
     }
 
     function isCardSmartObject(layer, job) {
@@ -913,7 +1235,15 @@ var OTRIS_JSX_VERSION = "2026-09-05.5";
         if (scene.background_smart_object && n === scene.background_smart_object) {
             return false;
         }
-        if (n === "Text" || n === "text" || n === "TEXT") {
+        var cards = scene.card_smart_objects;
+        if (cards) {
+            for (var c = 0; c < cards.length; c++) {
+                if (n === cards[c]) {
+                    return true;
+                }
+            }
+        }
+        if (n === "Text" || n === "text" || n === "TEXT" || n === "Front") {
             return true;
         }
         if (/бланк|прямоугольник|card|licence|license|ву\b|front|док/i.test(n)) {
@@ -935,6 +1265,50 @@ var OTRIS_JSX_VERSION = "2026-09-05.5";
         }
     }
 
+    function trySaveCopy(file, isPsb) {
+        try {
+            if (isPsb) {
+                saveMasterAM(file, true);
+            } else {
+                try {
+                    saveMasterAM(file, false);
+                } catch (eAm) {
+                    writeLog(null, "blank save AM psd: " + eAm);
+                }
+                if (!fileReady(file)) {
+                    saveMasterDom(file);
+                }
+            }
+        } catch (e) {
+            writeLog(null, "blank save " + (isPsb ? "psb" : "psd") + ": " + e);
+        }
+        return fileReady(file);
+    }
+
+    function saveFlattenedCard(file) {
+        var flatName = "_vu_flat_" + (new Date().getTime());
+        var actual = "";
+        try {
+            var dup = app.activeDocument.duplicate(flatName, true);
+            actual = docName(dup) || docName(app.activeDocument) || flatName;
+            activateByName(actual);
+            try {
+                app.activeDocument.flatten();
+            } catch (eFlat) {}
+            try {
+                saveMasterDom(file);
+            } catch (eDom) {
+                writeLog(null, "flatten save: " + eDom);
+            }
+            return fileReady(file);
+        } catch (e) {
+            writeLog(null, "flatten card: " + e);
+            return false;
+        } finally {
+            closeByName(actual || flatName);
+        }
+    }
+
     function renderBlankCard(job) {
         if (!job.blank_template) {
             return null;
@@ -944,48 +1318,97 @@ var OTRIS_JSX_VERSION = "2026-09-05.5";
             writeLog(null, "blank_template missing: " + job.blank_template);
             return null;
         }
-        var tmp = new File(Folder.temp.fsName + "/vu_card_" + String(job.job_id || "x") + "_" + (new Date().getTime()) + ".psd");
-        var name = "";
+        var stamp = String(job.job_id || "x") + "_" + (new Date().getTime());
+        var tmpPsb = new File(Folder.temp.fsName + "/vu_card_" + stamp + ".psb");
+        var tmpPsd = new File(Folder.temp.fsName + "/vu_card_" + stamp + ".psd");
+        var srcName = "";
+        var workName = "";
         try {
-            app.open(src);
-            name = docName(app.activeDocument);
-            var hits = applyTextMaps(
-                app.activeDocument,
-                job.blank_layers_by_name || job.layers_by_name,
-                job.blank_text_group_values || job.text_group_values,
-                job.blank_text_group_visibility || job.text_group_visibility,
-                job.category_visibility,
-                job
-            );
-            if (hits < 1) {
-                writeLog(null, "blank card namedHits=0 — check layer names");
+            writeLog(null, "opening blank docs=" + app.documents.length);
+            srcName = openFileResilient(src);
+            workName = srcName;
+            writeLog(null, "blank opened '" + srcName + "' docs=" + app.documents.length);
+            if (!activateByName(workName)) {
+                throw new Error("blank work doc lost");
             }
-            var saved = false;
+            var hits = 0;
             try {
-                saveMasterAM(tmp, false);
-                saved = tmp.exists && tmp.length > 0;
-            } catch (eAm) {
-                writeLog(null, "blank save AM: " + eAm);
+                hits = applyTextMapsDeep(
+                    app.activeDocument,
+                    job.blank_layers_by_name || job.layers_by_name,
+                    job.blank_text_group_values || job.text_group_values,
+                    job.blank_text_group_visibility || job.text_group_visibility,
+                    job.blank_category_visibility || job.category_visibility,
+                    job,
+                    job.blank_text_replacements || job.text_replacements,
+                    0
+                );
+            } catch (eMap) {
+                writeLog(null, "applyTextMaps error: " + eMap);
             }
-            if (!saved) {
-                try {
-                    saveMasterDom(tmp);
-                    saved = tmp.exists && tmp.length > 0;
-                } catch (eDom) {
-                    writeLog(null, "blank save DOM: " + eDom);
-                }
+            if (hits < 1) {
+                writeLog(null, "blank card namedHits=0 — will not replace Front with empty card");
+                return null;
             }
-            if (!saved) {
+            if (!activateByName(workName)) {
+                throw new Error("blank work doc lost after text");
+            }
+            var out = null;
+            if (trySaveCopy(tmpPsb, true)) {
+                out = tmpPsb;
+            } else if (trySaveCopy(tmpPsd, false)) {
+                out = tmpPsd;
+            } else if (activateByName(workName) && saveFlattenedCard(tmpPsd)) {
+                out = tmpPsd;
+            }
+            if (!out) {
                 throw new Error("blank card save failed");
             }
-            writeLog(null, "blank card " + tmp.fsName + " bytes=" + tmp.length + " hits=" + hits);
-            return tmp;
+            writeLog(null, "blank card " + out.fsName + " bytes=" + fileSize(out) + " hits=" + hits);
+            return out;
         } catch (e) {
             writeLog(null, "blank card failed: " + e);
             return null;
         } finally {
-            closeByName(name);
+            closeByName(srcName);
         }
+    }
+
+    function fillCardSmartObjectsInPlace(container, job) {
+        var n = 0;
+        function walk(layers) {
+            for (var i = 0; i < layers.length; i++) {
+                var layer = layers[i];
+                if (layer.typename === "LayerSet") {
+                    walk(layer.layers);
+                } else if (layer.typename === "ArtLayer" && isSmartObject(layer)) {
+                    if (isCardSmartObject(layer, job)) {
+                        writeLog(null, "export-edit card SO: " + layer.name);
+                        if (editSmartObjectViaExport(layer, function (innerDoc) {
+                            applyTextMapsDeep(
+                                innerDoc,
+                                job.layers_by_name || job.blank_layers_by_name,
+                                job.blank_text_group_values || job.text_group_values,
+                                job.blank_text_group_visibility || job.text_group_visibility,
+                                job.blank_category_visibility || job.category_visibility,
+                                job,
+                                job.text_replacements || job.blank_text_replacements,
+                                0
+                            );
+                        })) {
+                            n++;
+                        }
+                    } else if (isWrapperSmartObject(layer, job)) {
+                        writeLog(null, "export-edit via wrapper: " + layer.name);
+                        editSmartObject(layer, function (innerDoc) {
+                            n += fillCardSmartObjectsInPlace(innerDoc, job);
+                        }, false);
+                    }
+                }
+            }
+        }
+        walk(container.layers);
+        return n;
     }
 
     function replaceCardSmartObjects(container, cardFile, job) {
@@ -995,15 +1418,22 @@ var OTRIS_JSX_VERSION = "2026-09-05.5";
                 var layer = layers[i];
                 if (layer.typename === "LayerSet") {
                     walk(layer.layers);
-                } else if (layer.typename === "ArtLayer" && isSmartObject(layer) && isCardSmartObject(layer, job)) {
-                    try {
-                        layer.visible = true;
-                    } catch (eVis) {}
-                    if (selectLayer(layer) && replaceSmartObjectContents(cardFile)) {
-                        writeLog(null, "replaced card SO: " + layer.name);
-                        n++;
-                    } else {
-                        writeLog(null, "replace card SO failed: " + layer.name);
+                } else if (layer.typename === "ArtLayer" && isSmartObject(layer)) {
+                    if (isCardSmartObject(layer, job)) {
+                        try {
+                            layer.visible = true;
+                        } catch (eVis) {}
+                        if (selectLayer(layer) && replaceSmartObjectContents(cardFile)) {
+                            writeLog(null, "replaced card SO: " + layer.name);
+                            n++;
+                        } else {
+                            writeLog(null, "replace card SO failed: " + layer.name);
+                        }
+                    } else if (isWrapperSmartObject(layer, job)) {
+                        writeLog(null, "replace via wrapper: " + layer.name);
+                        editSmartObject(layer, function (innerDoc) {
+                            n += replaceCardSmartObjects(innerDoc, cardFile, job);
+                        }, false);
                     }
                 }
             }
@@ -1018,7 +1448,7 @@ var OTRIS_JSX_VERSION = "2026-09-05.5";
         } catch (eAct) {}
         applyMockupVariant(doc, job);
         var byName = job.layers_by_name || {};
-        var hits = updateNamedTextLayers(doc, byName);
+        var hits = updateNamedTextLayers(doc, byName, job.text_replacements);
         applyCategoryVisibility(doc, job.category_visibility || null, byName);
         updateTextGroupByIndex(doc, job.text_group_values || [], job.text_group_visibility || null);
         applyFontRules(doc, job);
@@ -1204,10 +1634,20 @@ var OTRIS_JSX_VERSION = "2026-09-05.5";
         writeLog(jobPath, "jsx " + OTRIS_JSX_VERSION);
         var job = readJson(new File(jobPath));
         writeLog(jobPath, "blank_template=" + (job.blank_template || ""));
+        writeLog(
+            jobPath,
+            "replacements=" + ((job.blank_text_replacements && job.blank_text_replacements.length) || 0)
+        );
         var templateFile = new File(job.template);
         var psdFile = new File(job.output_psd);
         var jpgFile = new File(job.output_jpg);
         var isPsb = job.output_is_psb === true || /\.psb$/i.test(job.template);
+        var needCard = !!(job.blank_template && job.template_name !== "mockup_blank");
+        var cardFile = null;
+        if (needCard) {
+            closeCachedTemplate(job);
+            cardFile = renderBlankCard(job);
+        }
 
         var opened = openJobDocument(job, templateFile);
         var workName = opened.workName;
@@ -1220,22 +1660,37 @@ var OTRIS_JSX_VERSION = "2026-09-05.5";
             if (!activateByName(workName)) {
                 throw new Error("Work document is not open: " + workName);
             }
+            if (cardFile) {
+                job._cardFile = cardFile;
+                job._cardReplaced = 0;
+            }
             logSmartObjects(app.activeDocument, "");
             applyJob(app.activeDocument, job, 0);
-            if (job.blank_template && job.template_name !== "mockup_blank") {
-                var cardFile = renderBlankCard(job);
-                if (cardFile) {
+            if (needCard) {
+                var replaced = job._cardReplaced || 0;
+                if (replaced < 1 && cardFile) {
                     if (!activateByName(workName)) {
                         throw new Error("Work document lost after blank card");
                     }
-                    var replaced = replaceCardSmartObjects(app.activeDocument, cardFile, job);
+                    replaced = replaceCardSmartObjects(app.activeDocument, cardFile, job);
                     writeLog(jobPath, "card SO replacements: " + replaced);
-                    if (replaced < 1) {
-                        writeLog(jobPath, "no card SO replaced — see SO list above");
-                    }
+                } else {
+                    writeLog(jobPath, "card SO replacements: " + replaced);
+                }
+                if (cardFile) {
                     try {
                         cardFile.remove();
                     } catch (eRm) {}
+                    cardFile = null;
+                    job._cardFile = null;
+                }
+                if (replaced < 1) {
+                    writeLog(jobPath, "Front replace fallback: export-edit");
+                    if (!activateByName(workName)) {
+                        throw new Error("Work document lost before Front export");
+                    }
+                    replaced = fillCardSmartObjectsInPlace(app.activeDocument, job);
+                    writeLog(jobPath, "card SO export-edits: " + replaced);
                 }
             }
             closeOrphans();

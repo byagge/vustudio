@@ -99,6 +99,7 @@ class TestTask4Integration(unittest.TestCase):
         self.assertEqual(job["mockup_variant"], "original")
         self.assertEqual(job["background"], 7)
         self.assertIn("hand_group", job["scene"])
+        self.assertIn("Front", job["scene"]["card_smart_objects"])
         self.assertIn("fonts", job)
         self.assertIn("blank_template", job)
         self.assertIn("УИК", job["layers_by_name"])
@@ -106,6 +107,18 @@ class TestTask4Integration(unittest.TestCase):
         self.assertEqual(job["layers_by_name"]["УИК"], "АБСАЛЯМОВ")
         self.assertEqual(job["layers_by_name"]["АБСАЛЯМОВ"], "АБСАЛЯМОВ")
         self.assertEqual(job["blank_layers_by_name"]["АБСАЛЯМОВ"], "АБСАЛЯМОВ")
+        self.assertTrue(
+            any(
+                row["name"] == "13.01.2025" and row["value"] == "27.02.2009"
+                for row in job["blank_text_replacements"]
+            )
+        )
+        self.assertTrue(
+            any(
+                row["name"] == "04 76 656492" and "0476" in row["value"]
+                for row in job["blank_text_replacements"]
+            )
+        )
 
     def test_template_cache_flags(self):
         job = {"template": "/mock/hand.psb"}
@@ -175,9 +188,18 @@ class TestTask4Integration(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn("OTRIS_JSX_VERSION", jsx)
-        self.assertIn("2026-09-05.5", jsx)
+        self.assertIn("2026-09-05.8", jsx)
         self.assertIn("renderBlankCard", jsx)
         self.assertIn("replaceCardSmartObjects", jsx)
+        self.assertIn("openFileResilient", jsx)
+        self.assertIn("closeCachedTemplate", jsx)
+        self.assertIn("fillCardSmartObjectsInPlace", jsx)
+        self.assertIn("isWrapperSmartObject", jsx)
+        self.assertIn("setTextViaAM", jsx)
+        self.assertIn("applyTextMapsDeep", jsx)
+        self.assertIn("lookupReplacement", jsx)
+        self.assertIn("will not replace Front with empty card", jsx)
+        self.assertIn("card layers", jsx)
         self.assertIn("defer card SO to replace", jsx)
         self.assertIn("blank_template=", jsx)
         self.assertIn("smartObjectOpened", jsx)

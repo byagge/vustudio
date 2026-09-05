@@ -31,6 +31,25 @@ def layers_by_name_for_template(block: VuTextBlock, tpl: dict) -> dict[str, str]
     return {layers_map[key]: values[key] for key in layers_map if key in values}
 
 
+def build_text_replacements(block: VuTextBlock, tpl: dict) -> list[dict[str, str]]:
+    """Явный список: имя слоя / текущий placeholder → новое значение."""
+    values = build_layer_values(block, tpl)
+    layers_map = tpl.get("field_layers") or {}
+    items: list[dict[str, str]] = []
+    for key, layer_name in layers_map.items():
+        if key not in values:
+            continue
+        items.append(
+            {
+                "field": key,
+                "name": layer_name,
+                "old": layer_name,
+                "value": values[key],
+            }
+        )
+    return items
+
+
 def resolve_blank_template_path() -> Path:
     spec = get_mockup("blank")
     path = spec.resolve_path()
@@ -100,6 +119,8 @@ def build_photoshop_job(task: RenderTask, *, output_psd: Path, output_jpg: Path)
     blank_path = resolve_blank_template_path()
     blank_map = layers_by_name_for_template(block, blank_tpl)
     blank_tg, blank_tg_vis = build_text_group(block, blank_tpl)
+    blank_replacements = build_text_replacements(block, blank_tpl)
+    hand_replacements = build_text_replacements(block, template)
 
     payload = build_render_payload(
         block,
@@ -115,6 +136,9 @@ def build_photoshop_job(task: RenderTask, *, output_psd: Path, output_jpg: Path)
     payload["blank_layers_by_name"] = blank_map
     payload["blank_text_group_values"] = blank_tg
     payload["blank_text_group_visibility"] = blank_tg_vis
+    payload["blank_category_visibility"] = category_visibility(block, blank_tpl)
+    payload["blank_text_replacements"] = blank_replacements
+    payload["text_replacements"] = hand_replacements + blank_replacements
 
     return {
         "job_id": task.job_id,

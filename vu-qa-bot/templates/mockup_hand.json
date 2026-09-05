@@ -19,6 +19,7 @@
     "birth_place_lat": "UZBEKSKAIA SSR",
     "authority_lat": "gibdd 7166",
     "residence_lat": "MOSKVA",
+    "cat_a": "a",
     "cat_b": "b",
     "cat_b1": "b1",
     "cat_m": "m"
@@ -49,7 +50,8 @@
     "background_count": 10,
     "hand_group": "Рука+док (перемещать папку целиком)",
     "original_layer": "Оригинал",
-    "photo_smart_object": "Photo"
+    "photo_smart_object": "Photo",
+    "card_smart_objects": ["Front"]
   },
   "fonts": {
     "layer_fields": {
