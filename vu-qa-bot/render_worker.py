@@ -68,6 +68,7 @@ def main() -> int:
     if recovered:
         log.warning("recovered %s stale job(s) from processing", recovered)
 
+    queue = RenderQueue(qdir)
     renderer = PhotoshopRenderer(RenderSettings.from_env())
     lock_file = lock_path()
 
