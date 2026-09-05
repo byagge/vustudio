@@ -1,5 +1,5 @@
 #target photoshop
-var OTRIS_JSX_VERSION = "2026-09-05.10";
+var OTRIS_JSX_VERSION = "2026-09-05.11";
 
 (function () {
     if (typeof app === "undefined" || !app.documents) {
@@ -129,83 +129,61 @@ var OTRIS_JSX_VERSION = "2026-09-05.10";
             return false;
         }
         var value = String(text);
-        var methods = [
-            function () {
-                var desc = new ActionDescriptor();
-                var ref = new ActionReference();
-                ref.putEnumerated(charIDToTypeID("TxLr"), charIDToTypeID("Ordn"), charIDToTypeID("Trgt"));
-                desc.putReference(charIDToTypeID("null"), ref);
-                var tDesc = new ActionDescriptor();
-                tDesc.putString(charIDToTypeID("Txt "), value);
-                desc.putObject(charIDToTypeID("T   "), charIDToTypeID("TxLr"), tDesc);
-                executeAction(charIDToTypeID("setd"), desc, DialogModes.NO);
-            },
-            function () {
-                var desc = new ActionDescriptor();
-                var ref = new ActionReference();
-                ref.putIdentifier(charIDToTypeID("Lyr "), layer.id);
-                desc.putReference(charIDToTypeID("null"), ref);
-                var tDesc = new ActionDescriptor();
-                tDesc.putString(charIDToTypeID("Txt "), value);
-                desc.putObject(charIDToTypeID("T   "), charIDToTypeID("TxLr"), tDesc);
-                executeAction(charIDToTypeID("setd"), desc, DialogModes.NO);
+        try {
+            var ref = new ActionReference();
+            ref.putEnumerated(
+                stringIDToTypeID("textLayer"),
+                stringIDToTypeID("ordinal"),
+                stringIDToTypeID("targetEnum")
+            );
+            var current = executeActionGet(ref);
+            if (!current.hasKey(stringIDToTypeID("textKey"))) {
+                return false;
             }
-        ];
-        for (var i = 0; i < methods.length; i++) {
+            var textKey = current.getObjectValue(stringIDToTypeID("textKey"));
+            textKey.putString(charIDToTypeID("Txt "), value);
             try {
-                methods[i]();
-                return true;
-            } catch (e) {}
+                if (textKey.hasKey(stringIDToTypeID("textStyleRange"))) {
+                    var oldList = textKey.getList(stringIDToTypeID("textStyleRange"));
+                    if (oldList.count > 0) {
+                        var first = oldList.getObjectValue(0);
+                        first.putInteger(stringIDToTypeID("from"), 0);
+                        first.putInteger(stringIDToTypeID("to"), value.length);
+                        var newList = new ActionList();
+                        newList.putObject(stringIDToTypeID("textStyleRange"), first);
+                        textKey.putList(stringIDToTypeID("textStyleRange"), newList);
+                    }
+                }
+            } catch (eRange) {}
+            var desc = new ActionDescriptor();
+            desc.putReference(charIDToTypeID("null"), ref);
+            desc.putObject(charIDToTypeID("T   "), stringIDToTypeID("textLayer"), textKey);
+            executeAction(charIDToTypeID("setd"), desc, DialogModes.NO);
+            return true;
+        } catch (e) {
+            writeLog(null, "setText AM preserve: " + e);
+            return false;
         }
-        return false;
     }
 
     function setTextPreserveStyle(layer, text, visible) {
-        try {
-            if (visible === false || text === null || text === undefined || text === "") {
+        if (visible === false) {
+            try {
                 layer.visible = false;
-                return;
-            }
-        } catch (eVis) {}
+            } catch (eHide) {}
+            return;
+        }
+        if (text === null || text === undefined || text === "") {
+            return;
+        }
         try {
             layer.visible = true;
         } catch (eShow) {}
-
         var newText = String(text);
-        var wrote = false;
         try {
-            var ti = layer.textItem;
-            var oldText = "";
-            var oldSize = null;
-            var oldFont = null;
-            var oldTracking = null;
-            try { oldText = String(ti.contents); } catch (eC) {}
-            try { oldSize = ti.size; } catch (eS) {}
-            try { oldFont = ti.font; } catch (eF) {}
-            try { oldTracking = ti.tracking; } catch (eT) {}
-            try {
-                ti.contents = newText;
-                wrote = true;
-            } catch (e1) {
-                try {
-                    ti.contents = newText.substring(0, 200);
-                    wrote = true;
-                } catch (e2) {}
-            }
-            if (wrote) {
-                try { if (oldFont) ti.font = oldFont; } catch (e3) {}
-                try {
-                    if (oldSize && oldText && newText.length > oldText.length * 1.2) {
-                        ti.size = Math.max(oldSize * (oldText.length / newText.length) * 0.96, oldSize * 0.72);
-                    } else if (oldSize) {
-                        ti.size = oldSize;
-                    }
-                } catch (e4) {}
-                try { if (oldTracking !== null) ti.tracking = oldTracking; } catch (e5) {}
-                return;
-            }
+            layer.textItem.contents = newText;
+            return;
         } catch (eDom) {}
-
         if (!setTextViaAM(layer, newText)) {
             throw new Error("setText failed on '" + layer.name + "'");
         }
@@ -314,13 +292,9 @@ var OTRIS_JSX_VERSION = "2026-09-05.10";
 
     function lookupReplacement(byName, replacements, layer) {
         var nm = "";
-        var contents = "";
         try {
-            nm = String(layer.name);
+            nm = String(layer.name).replace(/^\s+|\s+$/g, "");
         } catch (eN) {}
-        try {
-            contents = String(layer.textItem.contents);
-        } catch (eC) {}
         if (nm && mapHas(byName, nm)) {
             return mapGet(byName, nm);
         }
@@ -1144,11 +1118,6 @@ var OTRIS_JSX_VERSION = "2026-09-05.10";
         } catch (eGrp) {
             writeLog(null, "updateTextGroupByIndex: " + eGrp);
         }
-        try {
-            applyFontRules(doc, job);
-        } catch (eFont) {
-            writeLog(null, "applyFontRules: " + eFont);
-        }
         writeLog(null, "applyTextMaps '" + docName(doc) + "' namedHits=" + hits);
         return hits;
     }
@@ -1227,6 +1196,9 @@ var OTRIS_JSX_VERSION = "2026-09-05.10";
             return false;
         }
         if (scene.hand_group && n === scene.hand_group) {
+            return false;
+        }
+        if (nameInList(n, scene.skip_smart_objects || job.skip_smart_objects)) {
             return false;
         }
         return nameInList(n, scene.card_wrappers || job.card_wrappers);
@@ -1457,7 +1429,6 @@ var OTRIS_JSX_VERSION = "2026-09-05.10";
         var hits = updateNamedTextLayers(doc, byName, job.text_replacements);
         applyCategoryVisibility(doc, job.category_visibility || null, byName);
         updateTextGroupByIndex(doc, job.text_group_values || [], job.text_group_visibility || null);
-        applyFontRules(doc, job);
         walkLayers(doc.layers, job, depth || 0);
         writeLog(null, "applyJob depth=" + (depth || 0) + " doc='" + docName(doc) + "' namedHits=" + hits);
     }

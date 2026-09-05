@@ -52,7 +52,8 @@
     "original_layer": "Оригинал",
     "photo_smart_object": "Photo",
     "card_smart_objects": ["Front"],
-    "card_wrappers": ["Слой 0 копия"]
+    "card_wrappers": ["Слой 0 копия"],
+    "skip_smart_objects": ["Рука (ВКЛ смарт-фильтр=тепло)"]
   },
   "fonts": {
     "layer_fields": {

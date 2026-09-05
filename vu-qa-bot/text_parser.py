@@ -100,8 +100,9 @@ def parse_client_block(text: str) -> VuTextBlock:
             block.special_marks = m.group(1).strip()
             continue
 
-        if line.startswith("   Место рожд."):
-            ru, lat = _split_ru_lat(line.split("   Место рожд.", 1)[1].strip())
+        if line.startswith("Место рожд.") or raw.startswith("   Место рожд."):
+            payload = line.split("Место рожд.", 1)[1].strip()
+            ru, lat = _split_ru_lat(payload)
             block.birth_place_ru, block.birth_place_lat = ru, lat
             continue
 

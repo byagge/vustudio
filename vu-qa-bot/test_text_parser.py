@@ -40,6 +40,8 @@ class TestTextParser(unittest.TestCase):
         self.assertEqual(b.categories, ["B", "B1", "M"])
         self.assertEqual(b.back_table["B"].open_date, "27.02.2009")
         self.assertEqual(b.special_marks, "СТАЖ С 2009")
+        self.assertEqual(b.birth_place_ru, "Г. ХАБАРОВСК")
+        self.assertEqual(b.birth_place_lat, "G. KHABAROVSK")
 
     def test_roundtrip_with_generator(self):
         ident, place = parse_me("АБСАЛЯМОВ ВЛАДИСЛАВ НАИЛЕВИЧ 08.09.1983 Г. ХАБАРОВСК")
