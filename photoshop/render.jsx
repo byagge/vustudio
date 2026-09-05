@@ -1,5 +1,5 @@
 #target photoshop
-var OTRIS_JSX_VERSION = "2026-09-05.8";
+var OTRIS_JSX_VERSION = "2026-09-05.10";
 
 (function () {
     if (typeof app === "undefined" || !app.documents) {
@@ -77,7 +77,7 @@ var OTRIS_JSX_VERSION = "2026-09-05.8";
         }
     }
 
-    function collectTextLayers(container, out, directOnly) {
+    function collectTextLayers(container, out, directOnly, skipGroupName) {
         var layers;
         try {
             layers = container.layers;
@@ -95,7 +95,14 @@ var OTRIS_JSX_VERSION = "2026-09-05.8";
             if (isTextLayer(layer)) {
                 out.push(layer);
             } else if (!directOnly && typename === "LayerSet") {
-                collectTextLayers(layer, out, false);
+                var gname = "";
+                try {
+                    gname = String(layer.name);
+                } catch (eG) {}
+                if (skipGroupName && gname === skipGroupName) {
+                    continue;
+                }
+                collectTextLayers(layer, out, false, skipGroupName);
             }
         }
     }
@@ -317,16 +324,10 @@ var OTRIS_JSX_VERSION = "2026-09-05.8";
         if (nm && mapHas(byName, nm)) {
             return mapGet(byName, nm);
         }
-        if (contents && mapHas(byName, contents)) {
-            return mapGet(byName, contents);
-        }
         if (replacements) {
             for (var i = 0; i < replacements.length; i++) {
                 var row = replacements[i];
-                if (!row) {
-                    continue;
-                }
-                if ((nm && row.name === nm) || (contents && (row.old === contents || row.name === contents))) {
+                if (row && nm && row.name === nm) {
                     return row.value;
                 }
             }
@@ -336,12 +337,12 @@ var OTRIS_JSX_VERSION = "2026-09-05.8";
 
     function updateNamedTextLayers(doc, byName, replacements) {
         var layers = [];
-        collectTextLayers(doc, layers, false);
+        collectTextLayers(doc, layers, false, "Text");
         var hit = 0;
         for (var i = 0; i < layers.length; i++) {
             var layer = layers[i];
             var value = lookupReplacement(byName || {}, replacements, layer);
-            if (value === null || value === undefined) {
+            if (value === null || value === undefined || value === "") {
                 continue;
             }
             var nm = "";
@@ -1085,19 +1086,20 @@ var OTRIS_JSX_VERSION = "2026-09-05.8";
                             applyBackground(innerDoc, job);
                         });
                     } else if (isCardSmartObject(layer, job)) {
-                        if (job._cardFile) {
-                            try {
-                                layer.visible = true;
-                            } catch (eShow) {}
-                            if (selectLayer(layer) && replaceSmartObjectContents(job._cardFile)) {
-                                writeLog(null, "replaced card SO: " + layer.name);
-                                job._cardReplaced = (job._cardReplaced || 0) + 1;
-                            } else {
-                                writeLog(null, "replace card SO failed: " + layer.name);
-                            }
-                        } else {
-                            writeLog(null, "defer card SO to replace: " + layer.name);
-                        }
+                        writeLog(null, "edit card SO in place: " + layer.name);
+                        editSmartObject(layer, function (innerDoc) {
+                            applyTextMaps(
+                                innerDoc,
+                                job.layers_by_name || {},
+                                job.text_group_values,
+                                job.text_group_visibility,
+                                job.category_visibility,
+                                job,
+                                job.text_replacements
+                            );
+                            walkLayers(innerDoc.layers, job, depth + 1);
+                        }, true);
+                        job._cardEdited = (job._cardEdited || 0) + 1;
                     } else if (isWrapperSmartObject(layer, job)) {
                         writeLog(null, "enter wrapper SO: " + layer.name);
                         editSmartObject(layer, function (innerDoc) {
@@ -1192,6 +1194,18 @@ var OTRIS_JSX_VERSION = "2026-09-05.8";
         return hits;
     }
 
+    function nameInList(n, list) {
+        if (!list) {
+            return false;
+        }
+        for (var i = 0; i < list.length; i++) {
+            if (n === list[i]) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     function isWrapperSmartObject(layer, job) {
         if (isCardSmartObject(layer, job)) {
             return false;
@@ -1201,7 +1215,7 @@ var OTRIS_JSX_VERSION = "2026-09-05.8";
         try {
             n = String(layer.name);
         } catch (e) {
-            return false;
+            return true;
         }
         if (scene.photo_smart_object && n === scene.photo_smart_object) {
             return false;
@@ -1212,13 +1226,10 @@ var OTRIS_JSX_VERSION = "2026-09-05.8";
         if (scene.original_layer && n === scene.original_layer) {
             return false;
         }
-        if (n === "Слой 0 копия" || n.indexOf("Группа смарт-объектов") !== -1) {
-            return true;
+        if (scene.hand_group && n === scene.hand_group) {
+            return false;
         }
-        if (n.indexOf("Слой 0") === 0) {
-            return true;
-        }
-        return false;
+        return nameInList(n, scene.card_wrappers || job.card_wrappers);
     }
 
     function isCardSmartObject(layer, job) {
@@ -1235,18 +1246,13 @@ var OTRIS_JSX_VERSION = "2026-09-05.8";
         if (scene.background_smart_object && n === scene.background_smart_object) {
             return false;
         }
-        var cards = scene.card_smart_objects;
-        if (cards) {
-            for (var c = 0; c < cards.length; c++) {
-                if (n === cards[c]) {
-                    return true;
-                }
-            }
-        }
-        if (n === "Text" || n === "text" || n === "TEXT" || n === "Front") {
+        if (nameInList(n, scene.card_smart_objects) || nameInList(n, job.card_smart_objects)) {
             return true;
         }
-        if (/бланк|прямоугольник|card|licence|license|ву\b|front|док/i.test(n)) {
+        if (n === "Text" || n === "text" || n === "TEXT" || n === "Front" || n === "front") {
+            return true;
+        }
+        if (/^front$|^text$|card|licence|license/i.test(n)) {
             return true;
         }
         return false;
@@ -1385,18 +1391,18 @@ var OTRIS_JSX_VERSION = "2026-09-05.8";
                     if (isCardSmartObject(layer, job)) {
                         writeLog(null, "export-edit card SO: " + layer.name);
                         if (editSmartObjectViaExport(layer, function (innerDoc) {
-                            applyTextMapsDeep(
+                            applyTextMaps(
                                 innerDoc,
-                                job.layers_by_name || job.blank_layers_by_name,
-                                job.blank_text_group_values || job.text_group_values,
-                                job.blank_text_group_visibility || job.text_group_visibility,
-                                job.blank_category_visibility || job.category_visibility,
+                                job.layers_by_name || {},
+                                job.text_group_values,
+                                job.text_group_visibility,
+                                job.category_visibility,
                                 job,
-                                job.text_replacements || job.blank_text_replacements,
-                                0
+                                job.text_replacements
                             );
                         })) {
                             n++;
+                            job._cardEdited = (job._cardEdited || 0) + 1;
                         }
                     } else if (isWrapperSmartObject(layer, job)) {
                         writeLog(null, "export-edit via wrapper: " + layer.name);
@@ -1642,13 +1648,6 @@ var OTRIS_JSX_VERSION = "2026-09-05.8";
         var psdFile = new File(job.output_psd);
         var jpgFile = new File(job.output_jpg);
         var isPsb = job.output_is_psb === true || /\.psb$/i.test(job.template);
-        var needCard = !!(job.blank_template && job.template_name !== "mockup_blank");
-        var cardFile = null;
-        if (needCard) {
-            closeCachedTemplate(job);
-            cardFile = renderBlankCard(job);
-        }
-
         var opened = openJobDocument(job, templateFile);
         var workName = opened.workName;
         gWorkName = workName;
@@ -1660,38 +1659,14 @@ var OTRIS_JSX_VERSION = "2026-09-05.8";
             if (!activateByName(workName)) {
                 throw new Error("Work document is not open: " + workName);
             }
-            if (cardFile) {
-                job._cardFile = cardFile;
-                job._cardReplaced = 0;
-            }
+            job._cardEdited = 0;
             logSmartObjects(app.activeDocument, "");
             applyJob(app.activeDocument, job, 0);
-            if (needCard) {
-                var replaced = job._cardReplaced || 0;
-                if (replaced < 1 && cardFile) {
-                    if (!activateByName(workName)) {
-                        throw new Error("Work document lost after blank card");
-                    }
-                    replaced = replaceCardSmartObjects(app.activeDocument, cardFile, job);
-                    writeLog(jobPath, "card SO replacements: " + replaced);
-                } else {
-                    writeLog(jobPath, "card SO replacements: " + replaced);
-                }
-                if (cardFile) {
-                    try {
-                        cardFile.remove();
-                    } catch (eRm) {}
-                    cardFile = null;
-                    job._cardFile = null;
-                }
-                if (replaced < 1) {
-                    writeLog(jobPath, "Front replace fallback: export-edit");
-                    if (!activateByName(workName)) {
-                        throw new Error("Work document lost before Front export");
-                    }
-                    replaced = fillCardSmartObjectsInPlace(app.activeDocument, job);
-                    writeLog(jobPath, "card SO export-edits: " + replaced);
-                }
+            writeLog(jobPath, "card SO edited: " + (job._cardEdited || 0));
+            if (job.template_name !== "mockup_blank" && (job._cardEdited || 0) < 1) {
+                writeLog(jobPath, "Front in-place fallback: export-edit");
+                fillCardSmartObjectsInPlace(app.activeDocument, job);
+                writeLog(jobPath, "card SO edited: " + (job._cardEdited || 0));
             }
             closeOrphans();
             if (!activateByName(workName)) {

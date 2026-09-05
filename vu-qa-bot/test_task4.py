@@ -100,6 +100,7 @@ class TestTask4Integration(unittest.TestCase):
         self.assertEqual(job["background"], 7)
         self.assertIn("hand_group", job["scene"])
         self.assertIn("Front", job["scene"]["card_smart_objects"])
+        self.assertIn("Слой 0 копия", job["scene"]["card_wrappers"])
         self.assertIn("fonts", job)
         self.assertIn("blank_template", job)
         self.assertIn("УИК", job["layers_by_name"])
@@ -188,7 +189,9 @@ class TestTask4Integration(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn("OTRIS_JSX_VERSION", jsx)
-        self.assertIn("2026-09-05.8", jsx)
+        self.assertIn("2026-09-05.10", jsx)
+        self.assertIn("edit card SO in place", jsx)
+        self.assertIn("card_wrappers", jsx)
         self.assertIn("renderBlankCard", jsx)
         self.assertIn("replaceCardSmartObjects", jsx)
         self.assertIn("openFileResilient", jsx)

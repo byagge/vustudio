@@ -51,7 +51,8 @@
     "hand_group": "Рука+док (перемещать папку целиком)",
     "original_layer": "Оригинал",
     "photo_smart_object": "Photo",
-    "card_smart_objects": ["Front"]
+    "card_smart_objects": ["Front"],
+    "card_wrappers": ["Слой 0 копия"]
   },
   "fonts": {
     "layer_fields": {
