@@ -1,5 +1,5 @@
 #target photoshop
-var OTRIS_JSX_VERSION = "2026-09-05.11";
+var OTRIS_JSX_VERSION = "2026-09-05.12";
 
 (function () {
     if (typeof app === "undefined" || !app.documents) {
@@ -632,16 +632,35 @@ var OTRIS_JSX_VERSION = "2026-09-05.11";
 
     function applyBackground(doc, job) {
         if (!job.background || !job.scene) {
-            return;
+            return 0;
         }
         var prefix = job.scene.background_prefix || "Вариант ";
         var count = job.scene.background_count || 10;
+        var found = 0;
         for (var i = 1; i <= count; i++) {
             var layerName = prefix + i;
             forEachLayerByName(doc, layerName, function (layer) {
+                found++;
                 setLayerVisible(layer, i === job.background);
             });
         }
+        writeLog(null, "background #" + job.background + " in '" + docName(doc) + "' variants=" + found);
+        return found;
+    }
+
+    function applyPortraitIfNeeded(doc, job) {
+        if (!job.portrait_path) {
+            return false;
+        }
+        var name = (job.scene && job.scene.photo_smart_object) || "Photo";
+        var layer = findLayerByName(doc, name);
+        if (!layer) {
+            writeLog(null, "Photo SO '" + name + "' not in '" + docName(doc) + "'");
+            return false;
+        }
+        writeLog(null, "portrait -> " + name + " in '" + docName(doc) + "'");
+        replacePortrait(layer, job.portrait_path, job);
+        return true;
     }
 
     function applyMockupVariant(doc, job) {
@@ -1425,6 +1444,8 @@ var OTRIS_JSX_VERSION = "2026-09-05.11";
             app.activeDocument = doc;
         } catch (eAct) {}
         applyMockupVariant(doc, job);
+        applyBackground(doc, job);
+        applyPortraitIfNeeded(doc, job);
         var byName = job.layers_by_name || {};
         var hits = updateNamedTextLayers(doc, byName, job.text_replacements);
         applyCategoryVisibility(doc, job.category_visibility || null, byName);

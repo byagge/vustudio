@@ -189,8 +189,9 @@ class TestTask4Integration(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn("OTRIS_JSX_VERSION", jsx)
-        self.assertIn("2026-09-05.11", jsx)
+        self.assertIn("2026-09-05.12", jsx)
         self.assertIn("textStyleRange", jsx)
+        self.assertIn("applyPortraitIfNeeded", jsx)
         self.assertIn("edit card SO in place", jsx)
         self.assertIn("card_wrappers", jsx)
         self.assertIn("renderBlankCard", jsx)

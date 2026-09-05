@@ -143,23 +143,23 @@ class FallbackGenerator(PortraitGenerator):
 
 
 def build_generators(settings: PortraitSettings) -> list[PortraitGenerator]:
-    provider = settings.resolved_provider()
+    provider = settings.provider if settings.provider else "auto"
     gens: list[PortraitGenerator] = []
-    if provider == "openai":
-        gens.append(OpenAIGenerator(settings))
-    elif provider == "http":
-        gens.append(HttpApiGenerator(settings))
-    elif provider == "fallback":
-        gens.append(FallbackGenerator(settings))
-    elif provider == "none":
-        return []
-    else:
+    if provider == "auto":
         if settings.openai_api_key:
             gens.append(OpenAIGenerator(settings))
         if settings.api_url:
             gens.append(HttpApiGenerator(settings))
         if settings.fallback_enabled:
             gens.append(FallbackGenerator(settings))
+        return gens
+    resolved = settings.resolved_provider()
+    if resolved == "openai":
+        gens.append(OpenAIGenerator(settings))
+    elif resolved == "http":
+        gens.append(HttpApiGenerator(settings))
+    elif resolved == "fallback":
+        gens.append(FallbackGenerator(settings))
     return gens
 
 

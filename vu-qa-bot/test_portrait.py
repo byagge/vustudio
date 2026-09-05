@@ -116,6 +116,29 @@ class TestPortraitService(unittest.TestCase):
             self.assertTrue(Path(path).is_file())
 
 
+class TestPortraitAutoProvider(unittest.TestCase):
+    def test_auto_prefers_openai_over_localhost_http(self):
+        cfg = PortraitSettings(
+            openai_api_key="sk-test",
+            openai_model="dall-e-3",
+            openai_size="1024x1024",
+            api_url="http://127.0.0.1:8090/generate",
+            api_key=None,
+            width=390,
+            height=507,
+            jpeg_quality=90,
+            provider="auto",
+            fallback_enabled=True,
+            cache_enabled=False,
+            timeout_sec=30,
+        )
+        self.assertEqual(cfg.resolved_provider(), "openai")
+        from portrait_ai import OpenAIGenerator, build_generators
+
+        gens = build_generators(cfg)
+        self.assertIsInstance(gens[0], OpenAIGenerator)
+
+
 class TestOpenAIGeneratorMock(unittest.TestCase):
     def test_openai_parses_b64(self):
         import base64

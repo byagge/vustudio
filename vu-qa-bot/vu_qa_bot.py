@@ -503,7 +503,10 @@ def create_dispatcher(settings: Settings) -> Dispatcher:
         await cq.message.edit_reply_markup(reply_markup=render_options_kb(draft.options))
         await cq.message.edit_text(
             f"Выберите мокап и фон.\n"
-            f"Сейчас: <b>{html.escape(scene_summary(draft.options))}</b>",
+            f"Сейчас: <b>{html.escape(scene_summary(draft.options))}</b>\n\n"
+            f"Фон 1–10 — это сцена <b>за рукой</b> в мокапе «Рука+фон» / «Оригинал» "
+            f"(слой «Вариант N» внутри «Меняющийся фон»). "
+            f"На бланке и на самом пластике ВУ фон не меняется.",
             reply_markup=render_options_kb(draft.options),
         )
 
@@ -519,8 +522,11 @@ def create_dispatcher(settings: Settings) -> Dispatcher:
             return
         draft.options.generate_portrait = True
         draft.options.portrait_path = None
-        await cq.answer("ИИ-портрет будет запрошен при отрисовке")
-        await cq.message.edit_reply_markup(reply_markup=render_options_kb(draft.options))
+        await cq.answer("Генерирую портрет…")
+        ok = await _generate_portrait_preview(cq.message, draft)
+        if not ok:
+            draft.options.generate_portrait = False
+            await cq.message.edit_reply_markup(reply_markup=render_options_kb(draft.options))
 
     @dp.callback_query(F.data == "rq:go")
     async def cb_render_go(cq: CallbackQuery) -> None:

@@ -55,10 +55,10 @@ class PortraitSettings:
     def resolved_provider(self) -> str:
         if self.provider != "auto":
             return self.provider
-        if self.api_url:
-            return "http"
         if self.openai_api_key:
             return "openai"
+        if self.api_url:
+            return "http"
         if self.fallback_enabled:
             return "fallback"
         return "none"
