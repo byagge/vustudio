@@ -152,7 +152,12 @@ def render_options_kb(opts: RenderOptions) -> InlineKeyboardMarkup:
         rows.append(
             [
                 InlineKeyboardButton(
-                    text=("✓ " if opts.generate_portrait else "") + "🧑 Портрет (ИИ)",
+                    text=(
+                        "✓ "
+                        if (opts.generate_portrait or opts.portrait_path)
+                        else ""
+                    )
+                    + "🧑 Портрет (ИИ)",
                     callback_data="rp:ai",
                 ),
                 InlineKeyboardButton(text="▶️ Отрисовать", callback_data="rq:go"),
@@ -186,8 +191,12 @@ async def _generate_portrait_preview(msg: Message, draft: RenderDraft) -> bool:
 
     from render_models import block_to_dict
 
-    await msg.answer("🧑 Генерирую ИИ-портрет… (10–60 сек)")
-    result = await asyncio.to_thread(generate_ai_portrait, block_to_dict(block))
+    await msg.answer("🧑 Генерирую ИИ-портрет через OpenAI… (10–60 сек)")
+    result = await asyncio.to_thread(
+        generate_ai_portrait,
+        block_to_dict(block),
+        force=True,
+    )
     if not result.ok or not result.path:
         await msg.answer(f"❌ {html.escape(result.message)}")
         return False
@@ -504,9 +513,10 @@ def create_dispatcher(settings: Settings) -> Dispatcher:
         await cq.message.edit_text(
             f"Выберите мокап и фон.\n"
             f"Сейчас: <b>{html.escape(scene_summary(draft.options))}</b>\n\n"
-            f"Фон 1–10 — это сцена <b>за рукой</b> в мокапе «Рука+фон» / «Оригинал» "
-            f"(слой «Вариант N» внутри «Меняющийся фон»). "
-            f"На бланке и на самом пластике ВУ фон не меняется.",
+            f"Фон 1–10 — сцена за карточкой (стол / студия), не пластик ВУ.\n"
+            f"«Рука+фон» — рука на сменных фонах 1–10. "
+            f"«Оригинал» — та же рука с карточкой, фон — стена. "
+            f"«Бланк» — только пластик ВУ.",
             reply_markup=render_options_kb(draft.options),
         )
 
@@ -522,10 +532,14 @@ def create_dispatcher(settings: Settings) -> Dispatcher:
             return
         draft.options.generate_portrait = True
         draft.options.portrait_path = None
-        await cq.answer("Генерирую портрет…")
+        await cq.answer("Генерирую портрет через OpenAI…")
         ok = await _generate_portrait_preview(cq.message, draft)
         if not ok:
-            draft.options.generate_portrait = False
+            # Keep the flag: worker will generate again at render time.
+            draft.options.generate_portrait = True
+            await cq.message.answer(
+                "Портрет не готов сейчас. Нажмите «Отрисовать» — worker запросит OpenAI ещё раз."
+            )
             await cq.message.edit_reply_markup(reply_markup=render_options_kb(draft.options))
 
     @dp.callback_query(F.data == "rq:go")

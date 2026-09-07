@@ -37,7 +37,7 @@ class PortraitSettings:
         provider = os.getenv("PORTRAIT_PROVIDER", "auto").strip().lower()
         return cls(
             openai_api_key=key,
-            openai_model=os.getenv("PORTRAIT_OPENAI_MODEL", "dall-e-3").strip(),
+            openai_model=os.getenv("PORTRAIT_OPENAI_MODEL", "gpt-image-1").strip(),
             openai_size=os.getenv("PORTRAIT_OPENAI_SIZE", "1024x1024").strip(),
             api_url=api_url,
             api_key=os.getenv("PORTRAIT_API_KEY", "").strip() or None,

@@ -33,6 +33,62 @@ class PortraitGenerator(ABC):
         pass
 
 
+_GPT_IMAGE_DEFAULT = "gpt-image-1"
+
+
+def resolve_openai_image_model(model: str | None) -> str:
+    """DALL·E 2/3 retired May 2026 — map to gpt-image-1."""
+    raw = (model or "").strip()
+    if not raw or raw.lower().startswith("dall-e"):
+        return _GPT_IMAGE_DEFAULT
+    return raw
+
+
+def is_gpt_image_model(model: str) -> bool:
+    return (model or "").lower().startswith("gpt-image")
+
+
+def openai_image_body(settings: PortraitSettings, prompt: str, *, model: str | None = None) -> dict[str, Any]:
+    chosen = resolve_openai_image_model(model or settings.openai_model)
+    size = (settings.openai_size or "1024x1024").strip()
+    if is_gpt_image_model(chosen):
+        if size in {"1024x1024", "1792x1024", "1024x1792"} and settings.height > settings.width:
+            size = "1024x1536"
+        return {
+            "model": chosen,
+            "prompt": prompt,
+            "n": 1,
+            "size": size,
+            "quality": "medium",
+            "output_format": "jpeg",
+        }
+    body: dict[str, Any] = {
+        "model": chosen,
+        "prompt": prompt,
+        "n": 1,
+        "size": size,
+        "response_format": "b64_json",
+    }
+    if chosen.startswith("dall-e-3"):
+        body["quality"] = "hd"
+        body["style"] = "natural"
+    return body
+
+
+def _write_openai_image(item: dict[str, Any], out_path: Path, timeout: int) -> None:
+    b64 = item.get("b64_json")
+    if b64:
+        out_path.write_bytes(base64.b64decode(b64))
+        return
+    image_url = item.get("url")
+    if image_url:
+        req = urllib.request.Request(image_url, method="GET")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            out_path.write_bytes(resp.read())
+        return
+    raise KeyError("OpenAI image payload has neither b64_json nor url")
+
+
 class OpenAIGenerator(PortraitGenerator):
     def __init__(self, settings: PortraitSettings):
         self.settings = settings
@@ -43,41 +99,48 @@ class OpenAIGenerator(PortraitGenerator):
             return GenerationResult(ok=False, provider="openai", message="OPENAI_API_KEY не задан")
 
         prompt = build_portrait_prompt(fields)
-        model = self.settings.openai_model
-        body: dict[str, Any] = {
-            "model": model,
-            "prompt": prompt,
-            "n": 1,
-            "size": self.settings.openai_size,
-            "response_format": "b64_json",
-        }
-        if model.startswith("dall-e-3"):
-            body["quality"] = "hd"
-            body["style"] = "natural"
+        requested = (self.settings.openai_model or "").strip()
+        model = resolve_openai_image_model(requested)
+        if model != requested:
+            log.info("OpenAI model %s retired/unknown — using %s", requested or "(empty)", model)
 
-        url = "https://api.openai.com/v1/images/generations"
-        req = urllib.request.Request(
-            url,
-            data=json.dumps(body).encode("utf-8"),
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {key}",
+        bodies = [
+            openai_image_body(self.settings, prompt, model=model),
+            {
+                "model": model,
+                "prompt": prompt,
+                "n": 1,
+                "size": "1024x1024",
             },
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=self.settings.timeout_sec) as resp:
-                payload = json.loads(resp.read().decode("utf-8"))
-            data = payload["data"][0]["b64_json"]
-            out_path.write_bytes(base64.b64decode(data))
-            return GenerationResult(ok=True, raw_path=out_path, provider="openai")
-        except urllib.error.HTTPError as e:
-            err = e.read().decode("utf-8", errors="replace")[:500]
-            log.error("OpenAI HTTP %s: %s", e.code, err)
-            return GenerationResult(ok=False, provider="openai", message=f"OpenAI: {e.code} {err[:120]}")
-        except Exception as e:
-            log.exception("OpenAI portrait failed")
-            return GenerationResult(ok=False, provider="openai", message=str(e))
+        ]
+        url = "https://api.openai.com/v1/images/generations"
+        last_err = "OpenAI: пустой ответ"
+        for i, body in enumerate(bodies):
+            log.info("OpenAI portrait POST %s model=%s attempt=%s", url, body.get("model"), i + 1)
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(body).encode("utf-8"),
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {key}",
+                },
+                method="POST",
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=self.settings.timeout_sec) as resp:
+                    payload = json.loads(resp.read().decode("utf-8"))
+                _write_openai_image(payload["data"][0], out_path, self.settings.timeout_sec)
+                return GenerationResult(ok=True, raw_path=out_path, provider="openai")
+            except urllib.error.HTTPError as e:
+                err = e.read().decode("utf-8", errors="replace")[:500]
+                log.error("OpenAI HTTP %s: %s", e.code, err)
+                last_err = f"OpenAI: {e.code} {err[:160]}"
+                if e.code != 400:
+                    break
+            except Exception as e:
+                log.exception("OpenAI portrait failed")
+                return GenerationResult(ok=False, provider="openai", message=str(e))
+        return GenerationResult(ok=False, provider="openai", message=last_err)
 
 
 class HttpApiGenerator(PortraitGenerator):

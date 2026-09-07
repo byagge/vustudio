@@ -9,7 +9,13 @@ from unittest.mock import patch
 
 from PIL import Image
 
-from portrait_ai import FallbackGenerator, OpenAIGenerator
+from portrait_ai import (
+    FallbackGenerator,
+    OpenAIGenerator,
+    is_gpt_image_model,
+    openai_image_body,
+    resolve_openai_image_model,
+)
 from portrait_config import PortraitSettings
 from portrait_preprocess import prepare_portrait_file, validate_image_bytes
 from portrait_prompt import build_portrait_prompt, estimate_age, estimate_gender
@@ -116,6 +122,40 @@ class TestPortraitService(unittest.TestCase):
             self.assertTrue(Path(path).is_file())
 
 
+class TestPortraitForceSkipsCache(unittest.TestCase):
+    def test_force_regenerates(self):
+        os.environ["PORTRAIT_PROVIDER"] = "fallback"
+        os.environ["PORTRAIT_FALLBACK"] = "1"
+        os.environ["PORTRAIT_CACHE"] = "1"
+        fields = {
+            "surname_ru": "КЭШ",
+            "given_ru": "КЭШ КЭШЕВИЧ",
+            "birth_date": "02.02.1992",
+            "gender": "M",
+        }
+        tmp = tempfile.mkdtemp()
+        os.environ["RENDER_OUTPUT_DIR"] = tmp
+        first = generate_ai_portrait(fields, job_id="forcecache1")
+        self.assertTrue(first.ok, first.message)
+        with patch("portrait_service.generate_raw_portrait") as gen:
+            from portrait_ai import GenerationResult
+
+            gen.return_value = GenerationResult(ok=False, message="should not run")
+            cached = generate_ai_portrait(fields, job_id="forcecache2")
+            self.assertTrue(cached.ok)
+            self.assertEqual(cached.source, "cache")
+            gen.assert_not_called()
+        with patch("portrait_service.generate_raw_portrait") as gen:
+            from portrait_ai import GenerationResult
+
+            raw = Path(tempfile.gettempdir()) / "otris_force_raw.jpg"
+            Image.new("RGB", (100, 120), (10, 20, 30)).save(raw, format="JPEG")
+            gen.return_value = GenerationResult(ok=True, raw_path=raw, provider="fallback")
+            forced = generate_ai_portrait(fields, job_id="forcecache3", force=True)
+            self.assertTrue(forced.ok, forced.message)
+            gen.assert_called()
+
+
 class TestPortraitAutoProvider(unittest.TestCase):
     def test_auto_prefers_openai_over_localhost_http(self):
         cfg = PortraitSettings(
@@ -137,6 +177,36 @@ class TestPortraitAutoProvider(unittest.TestCase):
 
         gens = build_generators(cfg)
         self.assertIsInstance(gens[0], OpenAIGenerator)
+
+
+class TestOpenAIImageApi(unittest.TestCase):
+    def test_remap_retired_dalle(self):
+        self.assertEqual(resolve_openai_image_model("dall-e-3"), "gpt-image-1")
+        self.assertEqual(resolve_openai_image_model("dall-e-2"), "gpt-image-1")
+        self.assertEqual(resolve_openai_image_model("gpt-image-1-mini"), "gpt-image-1-mini")
+        self.assertTrue(is_gpt_image_model("gpt-image-1"))
+
+    def test_gpt_image_body_has_no_response_format(self):
+        cfg = PortraitSettings(
+            openai_api_key="sk-test",
+            openai_model="dall-e-3",
+            openai_size="1024x1024",
+            api_url=None,
+            api_key=None,
+            width=390,
+            height=507,
+            jpeg_quality=90,
+            provider="openai",
+            fallback_enabled=False,
+            cache_enabled=False,
+            timeout_sec=30,
+        )
+        body = openai_image_body(cfg, "passport photo")
+        self.assertEqual(body["model"], "gpt-image-1")
+        self.assertNotIn("response_format", body)
+        self.assertNotIn("style", body)
+        self.assertEqual(body["output_format"], "jpeg")
+        self.assertEqual(body["size"], "1024x1536")
 
 
 class TestOpenAIGeneratorMock(unittest.TestCase):

@@ -166,9 +166,22 @@ class PhotoshopRenderer:
     def render_task(self, task: RenderTask) -> RenderResult:
         from portrait_service import resolve_portrait
 
+        log.info(
+            "portrait before resolve job=%s generate=%s path=%s",
+            task.job_id,
+            task.options.generate_portrait,
+            task.options.portrait_path,
+        )
         portrait = resolve_portrait(task)
         if portrait:
             task.options.portrait_path = portrait
+            log.info("portrait for job %s -> %s", task.job_id, portrait)
+        else:
+            log.warning(
+                "portrait missing for job %s generate=%s",
+                task.job_id,
+                task.options.generate_portrait,
+            )
 
         mockup = get_mockup(task.options.mockup)
         mockup_path = mockup.resolve_path()

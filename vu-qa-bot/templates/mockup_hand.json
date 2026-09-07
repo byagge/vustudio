@@ -49,8 +49,10 @@
     "background_prefix": "Вариант ",
     "background_count": 10,
     "hand_group": "Рука+док (перемещать папку целиком)",
+    "hand_smart_object": "Рука (ВКЛ смарт-фильтр=тепло)",
     "original_layer": "Оригинал",
     "photo_smart_object": "Photo",
+    "photo_layer_aliases": ["Photo", "photo", "Фото", "фото", "Portrait", "portrait"],
     "card_smart_objects": ["Front"],
     "card_wrappers": ["Слой 0 копия"],
     "skip_smart_objects": ["Рука (ВКЛ смарт-фильтр=тепло)"]

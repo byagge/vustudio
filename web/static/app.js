@@ -20,7 +20,7 @@ const LABEL = {
 
 const MOCKUPS = [
   { value: "hand", label: "Рука + фон", hint: "Документ в руке на сменном фоне", bg: true, portrait: true },
-  { value: "original", label: "Оригинал", hint: "Тот же мокап без руки", bg: true, portrait: true },
+  { value: "original", label: "Оригинал", hint: "Рука с карточкой на стене", bg: true, portrait: true },
   { value: "blank", label: "Бланк", hint: "Плоский бланк без фона и портрета", bg: false, portrait: false },
 ];
 

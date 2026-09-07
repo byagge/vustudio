@@ -54,7 +54,7 @@ MOCKUPS: dict[str, MockupSpec] = {
     ),
     MockupKind.ORIGINAL.value: MockupSpec(
         kind=MockupKind.ORIGINAL.value,
-        title="Оригинал (без руки)",
+        title="Оригинал (фото)",
         psb_name="Мокап (рука+фоны).psb",
         template="mockup_hand",
         mockup_variant="original",

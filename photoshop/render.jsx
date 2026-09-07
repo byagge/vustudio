@@ -1,5 +1,5 @@
 #target photoshop
-var OTRIS_JSX_VERSION = "2026-09-05.12";
+var OTRIS_JSX_VERSION = "2026-09-05.21";
 
 (function () {
     if (typeof app === "undefined" || !app.documents) {
@@ -122,6 +122,281 @@ var OTRIS_JSX_VERSION = "2026-09-05.12";
             }
         }
         return null;
+    }
+
+    function layerNameKey(n) {
+        return String(n || "").replace(/^\s+|\s+$/g, "").toLowerCase();
+    }
+
+    function photoAliases(job) {
+        var list = ["photo", "фото", "portrait", "портрет", "id photo", "idphoto"];
+        var scene = (job && job.scene) || {};
+        if (scene.photo_smart_object) {
+            list.unshift(layerNameKey(scene.photo_smart_object));
+        }
+        var extra = scene.photo_layer_aliases;
+        if (extra) {
+            for (var i = 0; i < extra.length; i++) {
+                list.push(layerNameKey(extra[i]));
+            }
+        }
+        return list;
+    }
+
+    function isPhotoName(n, job) {
+        var raw = String(n || "");
+        var k = layerNameKey(raw);
+        var aliases = photoAliases(job);
+        for (var i = 0; i < aliases.length; i++) {
+            if (k === aliases[i]) {
+                return true;
+            }
+        }
+        return /photo|фото|portrait|портрет/i.test(raw);
+    }
+
+    function layerAspect(layer) {
+        try {
+            var b = layer.bounds;
+            var w = b[2].as("px") - b[0].as("px");
+            var h = b[3].as("px") - b[1].as("px");
+            if (h <= 1 || w <= 1) {
+                return 0;
+            }
+            return w / h;
+        } catch (e) {
+            return 0;
+        }
+    }
+
+    function layerLeft(layer) {
+        try {
+            return layer.bounds[0].as("px");
+        } catch (e) {
+            return 99999;
+        }
+    }
+
+    function isPhotoCandidateKind(layer) {
+        if (isTextLayer(layer)) {
+            return false;
+        }
+        try {
+            if (layer.kind === LayerKind.SOLIDFILL || layer.kind === LayerKind.GRADIENTFILL) {
+                return false;
+            }
+        } catch (eKind) {}
+        return true;
+    }
+
+    function fileBaseName(p) {
+        var s = String(p || "");
+        var slash = s.lastIndexOf("\\");
+        var fwd = s.lastIndexOf("/");
+        if (fwd > slash) {
+            slash = fwd;
+        }
+        return slash >= 0 ? s.substring(slash + 1) : s;
+    }
+
+    function isCardFaceDoc(doc, job) {
+        var n = docName(doc);
+        if (/license|licence/i.test(n)) {
+            return true;
+        }
+        var blank = fileBaseName(job && job.blank_template);
+        if (blank) {
+            var stem = blank.replace(/\.(psb|psd)$/i, "");
+            if (n === blank || (stem && n.indexOf(stem) === 0)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function isProtectedSceneLayer(layer, job) {
+        var n = "";
+        try {
+            n = String(layer.name);
+        } catch (e) {
+            return true;
+        }
+        var scene = (job && job.scene) || {};
+        if (scene.background_smart_object && n === scene.background_smart_object) {
+            return true;
+        }
+        if (scene.hand_group && n === scene.hand_group) {
+            return true;
+        }
+        if (scene.original_layer && n === scene.original_layer) {
+            return true;
+        }
+        if (nameInList(n, scene.skip_smart_objects || job.skip_smart_objects)) {
+            return true;
+        }
+        if (nameInList(n, scene.card_wrappers || job.card_wrappers)) {
+            return true;
+        }
+        if (isCardSmartObject(layer, job) || isWrapperSmartObject(layer, job)) {
+            return true;
+        }
+        if (/^(front|back|background|signature|bar\s*code|text)$/i.test(n)) {
+            return true;
+        }
+        return false;
+    }
+
+    function collectPhotoCandidates(container, job, out, prefix) {
+        var layers;
+        try {
+            layers = container.layers;
+        } catch (e) {
+            return;
+        }
+        for (var i = 0; i < layers.length; i++) {
+            var layer = layers[i];
+            var typename = "";
+            var name = "";
+            try {
+                typename = layer.typename;
+            } catch (eT) {
+                continue;
+            }
+            try {
+                name = String(layer.name);
+            } catch (eN) {
+                name = "?";
+            }
+            var path = prefix ? prefix + "/" + name : name;
+            if (typename === "LayerSet") {
+                collectPhotoCandidates(layer, job, out, path);
+            } else if (typename === "ArtLayer" && isPhotoCandidateKind(layer)) {
+                out.push({ layer: layer, path: path, name: name });
+            }
+        }
+    }
+
+    function findPhotoByName(container, job) {
+        var named = [];
+        collectPhotoCandidates(container, job, named, "");
+        for (var i = 0; i < named.length; i++) {
+            if (isPhotoName(named[i].name, job) && !isProtectedSceneLayer(named[i].layer, job)) {
+                return named[i];
+            }
+        }
+        return null;
+    }
+
+    function findPhotoOnCardFace(doc, job) {
+        var named = [];
+        collectPhotoCandidates(doc, job, named, "");
+        var cw = 0;
+        var ch = 0;
+        try {
+            cw = doc.width.as("px");
+            ch = doc.height.as("px");
+        } catch (eSz) {
+            return null;
+        }
+        if (cw < 10 || ch < 10) {
+            return null;
+        }
+        var best = null;
+        var bestArea = 0;
+        for (var i = 0; i < named.length; i++) {
+            var item = named[i];
+            if (!isVisible(item.layer) || isProtectedSceneLayer(item.layer, job)) {
+                continue;
+            }
+            var b;
+            var w = 0;
+            var h = 0;
+            var cx = 0;
+            try {
+                b = item.layer.bounds;
+                w = b[2].as("px") - b[0].as("px");
+                h = b[3].as("px") - b[1].as("px");
+                cx = (b[0].as("px") + b[2].as("px")) / 2;
+            } catch (eB) {
+                continue;
+            }
+            if (w < 30 || h < 40) {
+                continue;
+            }
+            if (w > cw * 0.42 || h > ch * 0.75) {
+                continue;
+            }
+            if (cx > cw * 0.42) {
+                continue;
+            }
+            var aspect = w / h;
+            if (aspect < 0.55 || aspect > 0.9) {
+                continue;
+            }
+            var area = w * h;
+            if (area > bestArea) {
+                bestArea = area;
+                best = item;
+            }
+        }
+        if (best) {
+            writeLog(null, "photo card-face " + best.path);
+        }
+        return best;
+    }
+
+    function findPhotoLayer(container, job) {
+        var byName = findPhotoByName(container, job);
+        if (byName) {
+            return byName;
+        }
+        if (isCardFaceDoc(container, job)) {
+            return findPhotoOnCardFace(container, job);
+        }
+        return null;
+    }
+
+    function logDocLayersDeep(doc, tag, depth, prefix) {
+        if (depth > 3) {
+            return;
+        }
+        var layers;
+        try {
+            layers = doc.layers;
+        } catch (e) {
+            return;
+        }
+        if (depth === 0) {
+            writeLog(null, tag + " '" + docName(doc) + "' deep");
+        }
+        var limit = layers.length > 30 ? 30 : layers.length;
+        for (var i = 0; i < limit; i++) {
+            var layer = layers[i];
+            var info = prefix || "";
+            try {
+                info += layer.name;
+            } catch (eN) {
+                info += "?";
+            }
+            try {
+                info += " " + layer.typename;
+            } catch (eT) {}
+            try {
+                info += " kind=" + layer.kind;
+            } catch (eK) {}
+            if (isSmartObject(layer)) {
+                info += " SO";
+            }
+            try {
+                info += " vis=" + isVisible(layer);
+            } catch (eV) {}
+            writeLog(null, "  D " + info);
+            try {
+                if (layer.typename === "LayerSet") {
+                    logDocLayersDeep(layer, tag, depth + 1, (prefix || "") + layer.name + "/");
+                }
+            } catch (eSet) {}
+        }
     }
 
     function setTextViaAM(layer, text) {
@@ -332,6 +607,57 @@ var OTRIS_JSX_VERSION = "2026-09-05.12";
         }
         writeLog(null, "text-by-name in '" + docName(doc) + "': layers=" + layers.length + " updated=" + hit);
         return hit;
+    }
+
+    function groupHasDirectSmartObject(group) {
+        try {
+            var layers = group.layers;
+            for (var i = 0; i < layers.length; i++) {
+                if (layers[i].typename === "ArtLayer" && isSmartObject(layers[i])) {
+                    return true;
+                }
+            }
+        } catch (e) {}
+        return false;
+    }
+
+    function groupHasDirectTextLayers(group) {
+        var textLayers = [];
+        collectTextLayers(group, textLayers, true);
+        return textLayers.length > 0;
+    }
+
+    function hideGroupsNamed(doc, name) {
+        var groups = [];
+        findGroupsNamed(doc, name, groups);
+        var hidden = 0;
+        for (var i = 0; i < groups.length; i++) {
+            var g = groups[i];
+            if (name === "Text" && groupHasDirectSmartObject(g)) {
+                try {
+                    g.visible = true;
+                } catch (eKeep) {}
+                writeLog(null, "keep group 'Text' (front SO) in '" + docName(doc) + "'");
+                continue;
+            }
+            if (name === "Text" && !groupHasDirectTextLayers(g)) {
+                try {
+                    g.visible = true;
+                } catch (eKeep2) {}
+                continue;
+            }
+            try {
+                g.visible = false;
+                hidden++;
+            } catch (e) {}
+        }
+        if (hidden) {
+            writeLog(
+                null,
+                "hide group '" + name + "' count=" + hidden + " in '" + docName(doc) + "'"
+            );
+        }
+        return hidden;
     }
 
     function updateTextGroupByIndex(doc, values, visibility) {
@@ -649,49 +975,320 @@ var OTRIS_JSX_VERSION = "2026-09-05.12";
     }
 
     function applyPortraitIfNeeded(doc, job) {
+        if (job._portraitDone) {
+            return true;
+        }
         if (!job.portrait_path) {
             return false;
         }
-        var name = (job.scene && job.scene.photo_smart_object) || "Photo";
-        var layer = findLayerByName(doc, name);
-        if (!layer) {
-            writeLog(null, "Photo SO '" + name + "' not in '" + docName(doc) + "'");
+        if (!isCardFaceDoc(doc, job)) {
+            writeLog(null, "portrait skip scene doc '" + docName(doc) + "'");
             return false;
         }
-        writeLog(null, "portrait -> " + name + " in '" + docName(doc) + "'");
-        replacePortrait(layer, job.portrait_path, job);
-        return true;
+        var found = findPhotoLayer(doc, job);
+        if (!found) {
+            writeLog(null, "Photo layer not in card '" + docName(doc) + "'");
+            return false;
+        }
+        writeLog(null, "portrait -> " + found.path + " in '" + docName(doc) + "'");
+        if (replacePortrait(found.layer, job.portrait_path, job)) {
+            job._portraitDone = true;
+            return true;
+        }
+        return false;
+    }
+
+    function forEachLayerDeep(container, fn) {
+        var layers;
+        try {
+            layers = container.layers;
+        } catch (e) {
+            return;
+        }
+        for (var i = 0; i < layers.length; i++) {
+            fn(layers[i]);
+            try {
+                if (layers[i].typename === "LayerSet") {
+                    forEachLayerDeep(layers[i], fn);
+                }
+            } catch (eSet) {}
+        }
+    }
+
+    function toggleNamedLayers(doc, name, visible) {
+        var n = 0;
+        if (!name) {
+            return 0;
+        }
+        forEachLayerByName(doc, name, function (layer) {
+            try {
+                setLayerVisible(layer, visible);
+                n++;
+            } catch (e) {}
+        });
+        if (n === 0) {
+            var key = layerNameKey(name);
+            forEachLayerDeep(doc, function (layer) {
+                var ln = "";
+                try {
+                    ln = String(layer.name);
+                } catch (eN) {
+                    return;
+                }
+                if (layerNameKey(ln) === key) {
+                    try {
+                        setLayerVisible(layer, visible);
+                        n++;
+                    } catch (e2) {}
+                }
+            });
+        }
+        return n;
+    }
+
+    function handChromeNames(job) {
+        var scene = (job && job.scene) || {};
+        var names = [];
+        if (scene.hand_smart_object) {
+            names.push(scene.hand_smart_object);
+        }
+        var extra = scene.skip_smart_objects || [];
+        var i;
+        for (i = 0; i < extra.length; i++) {
+            names.push(extra[i]);
+        }
+        return names;
+    }
+
+    function hideHandChromeOnly(doc, job) {
+        var n = 0;
+        var names = handChromeNames(job);
+        var i;
+        for (i = 0; i < names.length; i++) {
+            n += toggleNamedLayers(doc, names[i], false);
+        }
+        return n;
+    }
+
+    function showHandChrome(doc, job) {
+        var n = 0;
+        var names = handChromeNames(job);
+        var i;
+        for (i = 0; i < names.length; i++) {
+            n += toggleNamedLayers(doc, names[i], true);
+        }
+        return n;
+    }
+
+    function showCardStack(doc, job) {
+        var scene = (job && job.scene) || {};
+        var n = 0;
+        n += toggleNamedLayers(doc, scene.hand_group, true);
+        var cards = scene.card_smart_objects || [];
+        var i;
+        for (i = 0; i < cards.length; i++) {
+            n += toggleNamedLayers(doc, cards[i], true);
+        }
+        var wraps = scene.card_wrappers || [];
+        for (i = 0; i < wraps.length; i++) {
+            n += toggleNamedLayers(doc, wraps[i], true);
+        }
+        return n;
+    }
+
+    function hidePlateByKey(doc, name) {
+        var n = 0;
+        var key = layerNameKey(name);
+        if (!key) {
+            return 0;
+        }
+        forEachLayerDeep(doc, function (layer) {
+            var ln = "";
+            try {
+                ln = String(layer.name);
+            } catch (eN) {
+                return;
+            }
+            if (layerNameKey(ln) === key) {
+                try {
+                    layer.visible = false;
+                    n++;
+                } catch (eV) {}
+            }
+        });
+        return n;
+    }
+
+    function revealLayerChain(layer) {
+        var cur = layer;
+        for (var i = 0; i < 10 && cur; i++) {
+            try {
+                cur.visible = true;
+            } catch (eV) {}
+            try {
+                cur.grouped = false;
+            } catch (eG) {}
+            try {
+                if (cur.typename === "ArtLayer") {
+                    cur.layerMaskDisabled = true;
+                }
+            } catch (eM) {}
+            try {
+                if (cur.typename === "Document") {
+                    break;
+                }
+                cur = cur.parent;
+            } catch (eP) {
+                break;
+            }
+        }
+    }
+
+    function moveLayerOrder(layer, where) {
+        if (!selectLayer(layer)) {
+            return false;
+        }
+        try {
+            var desc = new ActionDescriptor();
+            var ref = new ActionReference();
+            ref.putEnumerated(charIDToTypeID("Lyr "), charIDToTypeID("Ordn"), charIDToTypeID("Trgt"));
+            desc.putReference(charIDToTypeID("null"), ref);
+            var ref2 = new ActionReference();
+            ref2.putEnumerated(charIDToTypeID("Lyr "), charIDToTypeID("Ordn"), charIDToTypeID(where));
+            desc.putReference(charIDToTypeID("T   "), ref2);
+            executeAction(charIDToTypeID("move"), desc, DialogModes.NO);
+            return true;
+        } catch (e) {
+            writeLog(null, "move layer " + where + ": " + e);
+            return false;
+        }
+    }
+
+    function liftNamedLayers(doc, name) {
+        var n = 0;
+        if (!name) {
+            return 0;
+        }
+        forEachLayerByName(doc, name, function (layer) {
+            revealLayerChain(layer);
+            if (moveLayerOrder(layer, "Frnt")) {
+                n++;
+            }
+        });
+        return n;
     }
 
     function applyMockupVariant(doc, job) {
         if (!job.mockup_variant || !job.scene) {
             return;
         }
-        var hand = job.scene.hand_group;
         var orig = job.scene.original_layer;
+        var hand = job.scene.hand_group;
         if (job.mockup_variant === "hand") {
-            if (orig) {
-                forEachLayerByName(doc, orig, function (layer) {
-                    setLayerVisible(layer, false);
-                });
+            var hidPlate = hidePlateByKey(doc, orig);
+            var shownCard = showCardStack(doc, job);
+            var shownHand = showHandChrome(doc, job);
+            writeLog(
+                null,
+                "variant hand hidePlate=" + hidPlate + " showCard=" + shownCard +
+                    " showHand=" + shownHand + " in '" + docName(doc) + "'"
+            );
+            return;
+        }
+        if (job.mockup_variant === "original") {
+            // «Оригинал» = стена. Карточка и рука лежат в «Рука+док» — их нельзя гасить.
+            var shownWall = toggleNamedLayers(doc, orig, true);
+            var shownCard = showCardStack(doc, job);
+            var shownHand = showHandChrome(doc, job);
+            var hidStudio = 0;
+            if (job.scene.background_smart_object) {
+                hidStudio = toggleNamedLayers(doc, job.scene.background_smart_object, false);
             }
-            if (hand) {
-                forEachLayerByName(doc, hand, function (layer) {
-                    setLayerVisible(layer, true);
-                });
-            }
-        } else if (job.mockup_variant === "original") {
-            if (hand) {
-                forEachLayerByName(doc, hand, function (layer) {
-                    setLayerVisible(layer, false);
-                });
-            }
-            if (orig) {
-                forEachLayerByName(doc, orig, function (layer) {
-                    setLayerVisible(layer, true);
-                });
+            writeLog(
+                null,
+                "variant original showWall=" + shownWall + " showCard=" + shownCard +
+                    " showHand=" + shownHand + " hideStudio=" + hidStudio +
+                    " in '" + docName(doc) + "'"
+            );
+        }
+    }
+
+    function placeCardOnScene(doc, cardFile) {
+        var file = (cardFile instanceof File) ? cardFile : new File(cardFile);
+        if (!file.exists) {
+            writeLog(null, "place card missing: " + file.fsName);
+            return false;
+        }
+        try {
+            app.activeDocument = doc;
+        } catch (eAct) {}
+        var desc = new ActionDescriptor();
+        desc.putPath(charIDToTypeID("null"), file);
+        desc.putEnumerated(charIDToTypeID("FTcs"), charIDToTypeID("QCSt"), charIDToTypeID("Qcsa"));
+        try {
+            desc.putBoolean(charIDToTypeID("Lnkd"), false);
+        } catch (eLnk) {}
+        try {
+            executeAction(charIDToTypeID("Plc "), desc, DialogModes.NO);
+        } catch (ePlc) {
+            try {
+                var desc2 = new ActionDescriptor();
+                desc2.putPath(charIDToTypeID("null"), file);
+                executeAction(stringIDToTypeID("placeEvent"), desc2, DialogModes.NO);
+            } catch (ePlc2) {
+                writeLog(null, "place card failed: " + ePlc2);
+                return false;
             }
         }
+        try {
+            var layer = doc.activeLayer;
+            try {
+                layer.grouped = false;
+            } catch (eG) {}
+            var b = layer.bounds;
+            var w = b[2].as("px") - b[0].as("px");
+            var cw = doc.width.as("px");
+            var ch = doc.height.as("px");
+            if (w > 1) {
+                layer.resize((cw * 0.36 / w) * 100, (cw * 0.36 / w) * 100, AnchorPosition.MIDDLECENTER);
+            }
+            b = layer.bounds;
+            var cx = (b[0].as("px") + b[2].as("px")) / 2;
+            var cy = (b[1].as("px") + b[3].as("px")) / 2;
+            layer.translate(cw * 0.5 - cx, ch * 0.48 - cy);
+            writeLog(null, "placed opaque card on scene");
+            return true;
+        } catch (eSc) {
+            writeLog(null, "scale placed card: " + eSc);
+            return true;
+        }
+    }
+
+    function composeOriginalScene(workName, job) {
+        if (!job || job.mockup_variant !== "original") {
+            return;
+        }
+        if (!activateByName(workName)) {
+            writeLog(null, "compose original: work doc lost");
+            return;
+        }
+        var hidG = toggleNamedLayers(app.activeDocument, job.scene.hand_group, false);
+        var hidH = hideHandChromeOnly(app.activeDocument, job);
+        var hidP = hidePlateByKey(app.activeDocument, job.scene.original_layer);
+        writeLog(
+            null,
+            "compose original hideGroup=" + hidG + " hideHand=" + hidH + " hidePlate=" + hidP
+        );
+        var card = renderBlankCard(job);
+        if (!card) {
+            writeLog(null, "compose original: blank card failed");
+            return;
+        }
+        if (!activateByName(workName)) {
+            writeLog(null, "compose original: work doc lost after blank");
+            return;
+        }
+        placeCardOnScene(app.activeDocument, card);
     }
 
     function scaleLayerToCanvas(doc) {
@@ -755,7 +1352,43 @@ var OTRIS_JSX_VERSION = "2026-09-05.12";
         layer.translate(cw / 2 - cx, ch / 2 - cy);
     }
 
+    function convertLayerToSmartObject(layer) {
+        if (!selectLayer(layer)) {
+            return false;
+        }
+        if (isSmartObject(layer)) {
+            return true;
+        }
+        try {
+            executeAction(stringIDToTypeID("newPlacedLayer"), new ActionDescriptor(), DialogModes.NO);
+            return true;
+        } catch (e) {
+            writeLog(null, "convert SO failed: " + e);
+            return false;
+        }
+    }
+
     function replacePortrait(layer, imagePath, job) {
+        var file = new File(imagePath);
+        if (!file.exists) {
+            writeLog(null, "portrait file missing: " + imagePath);
+            return false;
+        }
+        if (isProtectedSceneLayer(layer, job)) {
+            writeLog(null, "portrait refuse protected layer: " + layer.name);
+            return false;
+        }
+        if (!selectLayer(layer)) {
+            writeLog(null, "portrait layer not selectable");
+            return false;
+        }
+        if (!isSmartObject(layer) && !convertLayerToSmartObject(layer)) {
+            return false;
+        }
+        try {
+            layer = app.activeDocument.activeLayer;
+        } catch (eAct) {}
+        var placed = false;
         editSmartObject(layer, function (innerDoc) {
             var before = innerDoc.layers.length;
             placeImageInDoc(innerDoc, imagePath);
@@ -769,7 +1402,17 @@ var OTRIS_JSX_VERSION = "2026-09-05.12";
                     innerDoc.layers[innerDoc.layers.length - 1].remove();
                 }
             } catch (eRm) {}
-        });
+            placed = true;
+        }, true);
+        if (placed) {
+            writeLog(null, "portrait placed via edit contents");
+            return true;
+        }
+        if (replaceSmartObjectContents(file)) {
+            writeLog(null, "portrait replaced contents");
+            return true;
+        }
+        return false;
     }
 
     function selectLayer(layer) {
@@ -1052,47 +1695,83 @@ var OTRIS_JSX_VERSION = "2026-09-05.12";
         for (var i = 0; i < layers.length; i++) {
             var layer = layers[i];
             if (layer.typename === "LayerSet") {
+                try {
+                    if (String(layer.name) === "Text" && groupHasDirectSmartObject(layer)) {
+                        layer.visible = true;
+                    }
+                } catch (eTxtGrp) {}
                 walkLayers(layer.layers, job, depth);
             } else if (layer.typename === "ArtLayer" && isSmartObject(layer)) {
                 var scene = job.scene || {};
                 var isBg = scene.background_smart_object && layer.name === scene.background_smart_object;
-                var isPhoto = scene.photo_smart_object && layer.name === scene.photo_smart_object;
+                var isPhoto = isPhotoName(layer.name, job);
                 var isOrig = scene.original_layer && layer.name === scene.original_layer;
                 var isHand = scene.hand_group && layer.name === scene.hand_group;
-                // Mockup chrome: visibility only. Edit Contents is not available on these.
-                if (isOrig || isHand) {
+                var isCard = isCardSmartObject(layer, job);
+                if (isHand) {
                     continue;
                 }
-                if (!isVisible(layer) && !isBg && !isPhoto) {
+                if (isOrig) {
+                    continue;
+                }
+                if (isCard) {
+                    try {
+                        layer.visible = true;
+                    } catch (eCardVis) {}
+                }
+                if (!isVisible(layer) && !isBg && !isPhoto && !isCard) {
                     continue;
                 }
                 try {
                     if (isPhoto) {
-                        if (job.portrait_path) {
-                            replacePortrait(layer, job.portrait_path, job);
+                        if (isProtectedSceneLayer(layer, job)) {
+                            writeLog(null, "portrait refuse protected SO: " + layer.name);
+                        } else if (job.portrait_path && !job._portraitDone) {
+                            writeLog(null, "portrait walk -> " + layer.name);
+                            if (replacePortrait(layer, job.portrait_path, job)) {
+                                job._portraitDone = true;
+                            }
                         }
                     } else if (isBg) {
+                        if (job.mockup_variant === "original") {
+                            try {
+                                layer.visible = false;
+                            } catch (eHidBg) {}
+                            writeLog(null, "studio bg hidden for original");
+                        } else {
+                            try {
+                                layer.visible = true;
+                            } catch (eVis) {}
+                            editSmartObject(layer, function (innerDoc) {
+                                applyBackground(innerDoc, job);
+                            });
+                        }
+                    } else if (isCard) {
+                        var cardName = "";
                         try {
-                            layer.visible = true;
-                        } catch (eVis) {}
-                        editSmartObject(layer, function (innerDoc) {
-                            applyBackground(innerDoc, job);
-                        });
-                    } else if (isCardSmartObject(layer, job)) {
-                        writeLog(null, "edit card SO in place: " + layer.name);
-                        editSmartObject(layer, function (innerDoc) {
-                            applyTextMaps(
-                                innerDoc,
-                                job.layers_by_name || {},
-                                job.text_group_values,
-                                job.text_group_visibility,
-                                job.category_visibility,
-                                job,
-                                job.text_replacements
-                            );
-                            walkLayers(innerDoc.layers, job, depth + 1);
-                        }, true);
-                        job._cardEdited = (job._cardEdited || 0) + 1;
+                            cardName = String(layer.name);
+                        } catch (eCn) {}
+                        if (job._textSODone && (cardName === "Text" || cardName === "text" || cardName === "TEXT")) {
+                            writeLog(null, "skip Text SO already filled");
+                        } else {
+                            writeLog(null, "edit card SO in place: " + layer.name);
+                            if (cardName === "Text" || cardName === "text" || cardName === "TEXT") {
+                                job._textSODone = true;
+                            }
+                            editSmartObject(layer, function (innerDoc) {
+                                applyTextMaps(
+                                    innerDoc,
+                                    job.layers_by_name || {},
+                                    job.text_group_values,
+                                    job.text_group_visibility,
+                                    job.category_visibility,
+                                    job,
+                                    job.text_replacements
+                                );
+                                walkLayers(innerDoc.layers, job, depth + 1);
+                            }, true);
+                            job._cardEdited = (job._cardEdited || 0) + 1;
+                        }
                     } else if (isWrapperSmartObject(layer, job)) {
                         writeLog(null, "enter wrapper SO: " + layer.name);
                         editSmartObject(layer, function (innerDoc) {
@@ -1121,6 +1800,10 @@ var OTRIS_JSX_VERSION = "2026-09-05.12";
             app.activeDocument = doc;
         } catch (eAct) {}
         logDocLayers(doc, "card layers");
+        if (job && job.portrait_path && !job._portraitDone) {
+            logDocLayersDeep(doc, "card deep", 0, "");
+            applyPortraitIfNeeded(doc, job);
+        }
         var hits = 0;
         try {
             hits = updateNamedTextLayers(doc, byName || {}, replacements);
@@ -1137,7 +1820,61 @@ var OTRIS_JSX_VERSION = "2026-09-05.12";
         } catch (eGrp) {
             writeLog(null, "updateTextGroupByIndex: " + eGrp);
         }
+        try {
+            hideGroupsNamed(doc, "Text");
+        } catch (eHide) {}
+        if (hits < 1 && job && !job._textSODone) {
+            hits += enterNestedTextSmartObject(doc, byName, textVals, textVis, catVis, job, replacements);
+        }
         writeLog(null, "applyTextMaps '" + docName(doc) + "' namedHits=" + hits);
+        return hits;
+    }
+
+    function enterNestedTextSmartObject(doc, byName, textVals, textVis, catVis, job, replacements) {
+        var hits = 0;
+        function walk(layers) {
+            for (var i = 0; i < layers.length; i++) {
+                var layer = layers[i];
+                var typename = "";
+                try {
+                    typename = layer.typename;
+                } catch (eT) {
+                    continue;
+                }
+                if (typename === "LayerSet") {
+                    walk(layer.layers);
+                } else if (typename === "ArtLayer" && isSmartObject(layer)) {
+                    var nm = "";
+                    try {
+                        nm = String(layer.name);
+                    } catch (eN) {}
+                    if (nm !== "Text" && nm !== "text" && nm !== "TEXT") {
+                        continue;
+                    }
+                    try {
+                        layer.visible = true;
+                    } catch (eVis) {}
+                    writeLog(null, "enter nested Text SO in '" + docName(doc) + "'");
+                    job._textSODone = true;
+                    editSmartObject(layer, function (innerDoc) {
+                        hits += applyTextMaps(
+                            innerDoc,
+                            byName,
+                            textVals,
+                            textVis,
+                            catVis,
+                            job,
+                            replacements
+                        );
+                    }, true);
+                }
+            }
+        }
+        try {
+            walk(doc.layers);
+        } catch (eW) {
+            writeLog(null, "nested Text SO: " + eW);
+        }
         return hits;
     }
 
@@ -1444,12 +2181,15 @@ var OTRIS_JSX_VERSION = "2026-09-05.12";
             app.activeDocument = doc;
         } catch (eAct) {}
         applyMockupVariant(doc, job);
-        applyBackground(doc, job);
+        if (job.mockup_variant !== "original") {
+            applyBackground(doc, job);
+        }
         applyPortraitIfNeeded(doc, job);
         var byName = job.layers_by_name || {};
         var hits = updateNamedTextLayers(doc, byName, job.text_replacements);
         applyCategoryVisibility(doc, job.category_visibility || null, byName);
         updateTextGroupByIndex(doc, job.text_group_values || [], job.text_group_visibility || null);
+        hideGroupsNamed(doc, "Text");
         walkLayers(doc.layers, job, depth || 0);
         writeLog(null, "applyJob depth=" + (depth || 0) + " doc='" + docName(doc) + "' namedHits=" + hits);
     }
@@ -1636,6 +2376,10 @@ var OTRIS_JSX_VERSION = "2026-09-05.12";
             jobPath,
             "replacements=" + ((job.blank_text_replacements && job.blank_text_replacements.length) || 0)
         );
+        writeLog(
+            jobPath,
+            "portrait_path=" + (job.portrait_path ? job.portrait_path : "none")
+        );
         var templateFile = new File(job.template);
         var psdFile = new File(job.output_psd);
         var jpgFile = new File(job.output_jpg);
@@ -1655,6 +2399,7 @@ var OTRIS_JSX_VERSION = "2026-09-05.12";
             logSmartObjects(app.activeDocument, "");
             applyJob(app.activeDocument, job, 0);
             writeLog(jobPath, "card SO edited: " + (job._cardEdited || 0));
+            writeLog(jobPath, "portrait inserted=" + (job._portraitDone ? "yes" : "no"));
             if (job.template_name !== "mockup_blank" && (job._cardEdited || 0) < 1) {
                 writeLog(jobPath, "Front in-place fallback: export-edit");
                 fillCardSmartObjectsInPlace(app.activeDocument, job);
