@@ -1,0 +1,8 @@
+# Telegram Mini App требует HTTPS.
+# Подставьте свой домен в setup_https.ps1 — он перезапишет {DOMAIN}.
+# API по-прежнему слушает 127.0.0.1:8080 (uvicorn не трогаем).
+
+{$DOMAIN} {
+	encode gzip
+	reverse_proxy 127.0.0.1:8080
+}

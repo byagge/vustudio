@@ -98,6 +98,7 @@ def create_app() -> FastAPI:
 
     @app.get("/api/v1/mockups", response_model=MockupsResponse)
     async def list_mockups_api():
+        from mockup_registry import PANEL_MOCKUP
         from mockup_scene import list_mockups_info
 
         items = [
@@ -112,6 +113,7 @@ def create_app() -> FastAPI:
                 ],
             )
             for m in list_mockups_info()
+            if m.kind == PANEL_MOCKUP
         ]
         return MockupsResponse(mockups=items)
 
@@ -221,7 +223,11 @@ def create_app() -> FastAPI:
         if not path:
             raise HTTPException(404, "Превью не найдено")
         media = "image/png" if path.suffix.lower() == ".png" else "image/jpeg"
-        return FileResponse(path, media_type=media)
+        return FileResponse(
+            path,
+            media_type=media,
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
 
     @app.post("/api/v1/mockups/backgrounds/extract")
     async def mockup_backgrounds_extract(overwrite: bool = False, _: None = Depends(auth)):
@@ -312,7 +318,7 @@ def create_app() -> FastAPI:
 
         queued = substitute_text_queued(
             body.text_block,
-            mockup=body.mockup,
+            mockup="hand",
             background=body.background,
             portrait_path=body.portrait_path,
             generate_portrait=body.generate_portrait,

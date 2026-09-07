@@ -77,6 +77,13 @@ class TestMockupScene(unittest.TestCase):
         kinds = {m.kind for m in infos}
         self.assertEqual(kinds, {MockupKind.BLANK.value, MockupKind.HAND.value, MockupKind.ORIGINAL.value})
 
+    def test_coerce_panel_hides_blank_and_original(self):
+        from mockup_registry import coerce_panel_mockup
+
+        self.assertEqual(coerce_panel_mockup("blank"), "hand")
+        self.assertEqual(coerce_panel_mockup("original"), "hand")
+        self.assertEqual(coerce_panel_mockup("hand"), "hand")
+
 
 if __name__ == "__main__":
     unittest.main()

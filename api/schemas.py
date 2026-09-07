@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class RegionItem(BaseModel):
@@ -74,11 +74,18 @@ class DatasetRequest(BaseModel):
 
 class RenderRequest(BaseModel):
     text_block: str = Field(..., description="Клиентский блок полей ВУ")
-    mockup: str = Field("hand", description="blank | hand | original")
+    mockup: str = Field("hand", description="hand")
     background: int = Field(1, ge=1, le=10)
     portrait_path: str | None = None
     generate_portrait: bool = False
     wait: bool = Field(True, description="Ждать завершения worker (до 120 сек)")
+
+    @field_validator("mockup")
+    @classmethod
+    def panel_mockup_only(cls, v: str) -> str:
+        if v in {"blank", "original", ""}:
+            return "hand"
+        return v or "hand"
 
 
 class RenderResponse(BaseModel):
@@ -177,6 +184,7 @@ class BackgroundPreviewItem(BaseModel):
     id: int
     layer_name: str
     has_preview: bool
+    updated: int = 0
 
 
 class BackgroundListResponse(BaseModel):

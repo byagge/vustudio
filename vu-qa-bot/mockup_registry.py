@@ -64,5 +64,17 @@ MOCKUPS: dict[str, MockupSpec] = {
 }
 
 
+# На панели генерации только рука+фон. Бланк и «Оригинал» в ТЗ не требуются.
+PANEL_MOCKUP = MockupKind.HAND.value
+HIDDEN_PANEL_MOCKUPS = frozenset({MockupKind.BLANK.value, MockupKind.ORIGINAL.value})
+
+
 def get_mockup(kind: str) -> MockupSpec:
     return MOCKUPS.get(kind, MOCKUPS[MockupKind.HAND.value])
+
+
+def coerce_panel_mockup(kind: str) -> str:
+    """Скрытые режимы панели всегда уходят в hand."""
+    if kind in MOCKUPS and kind not in HIDDEN_PANEL_MOCKUPS:
+        return kind
+    return PANEL_MOCKUP

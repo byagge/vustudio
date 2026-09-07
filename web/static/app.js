@@ -20,14 +20,13 @@ const LABEL = {
 
 const MOCKUPS = [
   { value: "hand", label: "Рука + фон", hint: "Документ в руке на сменном фоне", bg: true, portrait: true },
-  { value: "original", label: "Оригинал", hint: "Рука с карточкой на стене", bg: true, portrait: true },
-  { value: "blank", label: "Бланк", hint: "Плоский бланк без фона и портрета", bg: false, portrait: false },
 ];
 
-const BG_COLORS = [
-  "#3b5bdb", "#2b8a3e", "#a61e4d", "#5f3dc4", "#0b7285",
-  "#e8590c", "#495057", "#862e9c", "#1864ab", "#c92a2a",
-];
+const MOCKUP_LABELS = {
+  hand: "Рука + фон",
+  original: "Оригинал",
+  blank: "Бланк",
+};
 
 const PAGES = [
   { id: "home", title: "Главная", hint: "Обзор и статус", icon: "house" },
@@ -37,6 +36,7 @@ const PAGES = [
   { id: "system", title: "Система", hint: "Сервер и обслуживание", icon: "server" },
   { id: "settings", title: "Настройки", hint: "Ключ доступа", icon: "settings" },
   { id: "help", title: "Помощь", hint: "Инструкции", icon: "circle-help" },
+  { id: "more", title: "Ещё", hint: "Система и настройки", icon: "menu" },
 ];
 
 let lastResult = null;
@@ -52,6 +52,17 @@ let selRegion, selMockup, selBackground;
 const $ = (id) => document.getElementById(id);
 const icon = (n, s) => (window.Icons ? Icons.svg(n, s || 16) : "");
 const hydrate = (el) => window.Icons && Icons.hydrate(el);
+
+(function bootTelegram() {
+  const tg = window.Telegram && window.Telegram.WebApp;
+  if (!tg) return;
+  try {
+    tg.ready();
+    tg.expand();
+    const mobile = ["ios", "android", "android_x"].includes(tg.platform);
+    if (mobile) document.documentElement.classList.add("app-shell");
+  } catch {}
+})();
 const esc = (s) =>
   String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
@@ -303,9 +314,9 @@ function VuSelect(host, cfg) {
           const inner = o.thumb
             ? `<img src="${esc(o.thumb)}" alt="" loading="lazy">`
             : `<span>${esc(o.short || o.value)}</span>`;
-          const bg = o.thumb ? "" : `background:${o.color || "#333"}`;
+          const empty = o.thumb ? "" : " empty";
           return `<div class="sel-tile ${on ? "sel-on" : ""} ${i === state.cursor ? "cursor" : ""}" data-v="${esc(o.value)}">
-            <div class="sel-thumb" style="${bg}">${inner}</div>
+            <div class="sel-thumb${empty}">${inner}</div>
             <div class="sel-tile-cap">${esc(o.label)}</div>
           </div>`;
         })
@@ -415,6 +426,11 @@ function goto(page) {
   document.querySelectorAll(".nav-item[data-page]").forEach((b) =>
     b.classList.toggle("active", b.dataset.page === page)
   );
+  document.querySelectorAll(".bottom-nav .bn-item").forEach((b) => {
+    const tab = b.dataset.page;
+    const on = tab === page || (tab === "more" && ["system", "settings", "help", "more"].includes(page));
+    b.classList.toggle("active", on);
+  });
   document.querySelectorAll(".page").forEach((p) =>
     p.classList.toggle("active", p.id === `page-${page}`)
   );
@@ -425,6 +441,9 @@ function goto(page) {
 }
 
 document.querySelectorAll(".nav-item[data-page]").forEach((b) =>
+  b.addEventListener("click", () => goto(b.dataset.page))
+);
+document.querySelectorAll(".bottom-nav .bn-item").forEach((b) =>
   b.addEventListener("click", () => goto(b.dataset.page))
 );
 bindDelegates(document);
@@ -947,22 +966,38 @@ $("copyText").addEventListener("click", async () => {
 });
 
 /* ============ RENDER FORM ============ */
-const mockupLabel = (v) => MOCKUPS.find((m) => m.value === v)?.label || v || "—";
+const mockupLabel = (v) => MOCKUP_LABELS[v] || MOCKUPS.find((m) => m.value === v)?.label || v || "—";
 
-async function loadBackgrounds() {
-  let items = Array.from({ length: 10 }, (_, i) => ({ id: i + 1, layer_name: `Вариант ${i + 1}`, has_preview: false }));
+let bgPoll = null;
+
+async function loadBackgrounds({ startExtract = true } = {}) {
+  let items = Array.from({ length: 10 }, (_, i) => ({ id: i + 1, layer_name: `Вариант ${i + 1}`, has_preview: false, updated: 0 }));
   try {
     const data = await api("/api/v1/mockups/backgrounds");
     if (data.backgrounds?.length) items = data.backgrounds;
   } catch {}
 
   const withPreview = items.filter((b) => b.has_preview).length;
-  $("bgHint").textContent = withPreview
-    ? ""
-    : "— превью не извлечены";
-  $("bgHint").dataset.tip = withPreview
-    ? ""
-    : "Чтобы видеть картинки фонов, извлеките их в разделе «Система».";
+  const hint = $("bgHint");
+  if (withPreview === items.length) {
+    hint.textContent = "";
+    hint.dataset.tip = "";
+    if (bgPoll) {
+      clearInterval(bgPoll);
+      bgPoll = null;
+    }
+  } else {
+    hint.textContent = withPreview ? `— превью ${withPreview} из ${items.length}` : "— загружаем превью…";
+    hint.dataset.tip = "Картинки слоёв «Вариант 1…10» из мокапа. Если пусто — подождите извлечения или нажмите «Извлечь превью фонов» в «Система».";
+    if (startExtract) {
+      try {
+        await api("/api/v1/mockups/backgrounds/extract", { method: "POST" });
+      } catch {}
+    }
+    if (!bgPoll) {
+      bgPoll = setInterval(() => loadBackgrounds({ startExtract: false }), 2500);
+    }
+  }
 
   selBackground.setOptions(
     items.map((b) => ({
@@ -970,8 +1005,7 @@ async function loadBackgrounds() {
       label: `Фон ${b.id}`,
       short: String(b.id),
       hint: b.layer_name,
-      color: BG_COLORS[(b.id - 1) % BG_COLORS.length],
-      thumb: b.has_preview ? `/api/v1/mockups/backgrounds/${b.id}/preview` : null,
+      thumb: b.has_preview ? `/api/v1/mockups/backgrounds/${b.id}/preview?v=${b.updated || 1}` : null,
     }))
   );
   const saved = readJSON(STORE.form, null);
@@ -981,7 +1015,7 @@ async function loadBackgrounds() {
 function saveForm() {
   writeJSON(STORE.form, {
     text: $("renderText").value || "",
-    mockup: selMockup?.getValue() || "hand",
+    mockup: "hand",
     background: selBackground?.getValue() || "1",
     portrait: $("genPortrait").checked,
   });
@@ -1367,7 +1401,7 @@ $("renderForm").addEventListener("submit", async (e) => {
 
     const body = {
       text_block: $("renderText").value,
-      mockup: selMockup.getValue(),
+      mockup: "hand",
       background: Number(selBackground.getValue() || 1),
       generate_portrait: $("genPortrait").checked,
       portrait_path: portraitPath,
@@ -1554,7 +1588,7 @@ $("clearLocal").addEventListener("click", () => {
   const f = readJSON(STORE.form, null);
   if (f) {
     if (f.text) $("renderText").value = f.text;
-    if (f.mockup) selMockup.setValue(f.mockup);
+    if (f.mockup && f.mockup === "hand") selMockup.setValue("hand");
     $("genPortrait").checked = !!f.portrait;
   }
 

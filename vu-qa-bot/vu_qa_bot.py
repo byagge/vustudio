@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Telegram-бот: генерация записей ВУ + очередь отрисовки PSD/JPG.
+Telegram-бот VU Studio.
 
-Архитектура task1.md:
-  бот → парсер → JSON → очередь → render-worker → Photoshop → JPG + PSD
+Сетка меню и Mini App «Панель» — как в референсе. Логика: генерация блока,
+отрисовка Photoshop, портрет, профиль.
 """
 from __future__ import annotations
 
@@ -12,30 +12,32 @@ import asyncio
 import html
 import logging
 from dataclasses import dataclass, field
-from pathlib import Path
 
 from aiogram import Bot, Dispatcher, BaseMiddleware, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.filters import Command, CommandObject
 from aiogram.types import (
+    BotCommand,
     BufferedInputFile,
     CallbackQuery,
     FSInputFile,
-    InlineKeyboardButton,
     InlineKeyboardMarkup,
+    MenuButtonCommands,
+    MenuButtonWebApp,
     Message,
 )
 
 from config import Settings
 from formatter import BANNER, format_client_block, format_debug_block, record_to_json, render_html
-from mockup_registry import MOCKUPS, MockupKind
-from mockup_scene import normalize_options_for_mockup, scene_summary, validate_scene_options
+from mockup_registry import MOCKUPS, coerce_panel_mockup
+from mockup_scene import normalize_options_for_mockup, scene_summary
 from portrait_service import generate_ai_portrait, portrait_status_label, prepare_upload, save_upload
 from photoshop_text import substitute_text_queued, wait_substitute
 from render_models import RenderOptions
 from text_parser import TextParseError, parse_client_block
 from text_realism import validate_block
+import tg_ui
 from vu_testdata import (
     BIRTH_PLACES,
     REGIONS,
@@ -46,13 +48,10 @@ from vu_testdata import (
     parse_me,
 )
 
-PAGE = 24
-BP_PAGE = 8
-USAGE = (
-    "<b>Формат:</b>\n"
+ME_HINT = (
+    f"{tg_ui.ce('info')} <b>Формат профиля</b>\n"
     "<code>/me ФАМИЛИЯ ИМЯ ОТЧЕСТВО ДД.ММ.ГГГГ МЕСТО РОЖДЕНИЯ</code>\n\n"
-    "<b>Отрисовка:</b> вставьте блок полей → выберите мокап/фон → «Отрисовать».\n"
-    "Фото для портрета — отправьте изображение с подписью <code>/portrait</code>."
+    "Или вставьте готовый блок полей — откроется отрисовка."
 )
 
 log = logging.getLogger("vu_qa_bot")
@@ -68,104 +67,34 @@ class RenderDraft:
 _drafts: dict[int, RenderDraft] = {}
 
 
+def _queue_snapshot() -> tuple[dict, bool]:
+    from photoshop_server import get_server_status
+
+    st = get_server_status()
+    return (
+        {
+            "pending": st.queue.pending,
+            "processing": st.queue.processing,
+            "done": st.queue.done,
+            "failed": st.queue.failed,
+        },
+        st.worker_alive,
+    )
+
+
 def region_kb(page: int = 0) -> InlineKeyboardMarkup:
-    codes = sorted(REGIONS)
-    pages = max(1, (len(codes) + PAGE - 1) // PAGE)
-    page = max(0, min(page, pages - 1))
-    chunk = codes[page * PAGE : (page + 1) * PAGE]
-    rows = [
-        [
-            InlineKeyboardButton(text=f"{c} {REGIONS[c][:18]}", callback_data=f"rg:{c}")
-            for c in chunk[i : i + 2]
-        ]
-        for i in range(0, len(chunk), 2)
-    ]
-    nav = []
-    if page > 0:
-        nav.append(InlineKeyboardButton(text="◀", callback_data=f"rgp:{page - 1}"))
-    nav.append(InlineKeyboardButton(text=f"{page + 1}/{pages}", callback_data="rgp:noop"))
-    if page < pages - 1:
-        nav.append(InlineKeyboardButton(text="▶", callback_data=f"rgp:{page + 1}"))
-    rows.append(nav)
-    rows.append([InlineKeyboardButton(text="🎲 Любое подразделение", callback_data="rg:any")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+    return tg_ui.region_kb(page, sorted(REGIONS), REGIONS)
 
 
 def birthplace_kb(page: int = 0) -> InlineKeyboardMarkup:
-    places = BIRTH_PLACES
-    pages = max(1, (len(places) + BP_PAGE - 1) // BP_PAGE)
-    page = max(0, min(page, pages - 1))
-    chunk = places[page * BP_PAGE : (page + 1) * BP_PAGE]
-    rows = [
-        [InlineKeyboardButton(text=p[:28], callback_data=f"bp:{i + page * BP_PAGE}")]
-        for i, p in enumerate(chunk)
-    ]
-    nav = []
-    if page > 0:
-        nav.append(InlineKeyboardButton(text="◀", callback_data=f"bpp:{page - 1}"))
-    nav.append(InlineKeyboardButton(text=f"{page + 1}/{pages}", callback_data="bpp:noop"))
-    if page < pages - 1:
-        nav.append(InlineKeyboardButton(text="▶", callback_data=f"bpp:{page + 1}"))
-    rows.append(nav)
-    rows.append([InlineKeyboardButton(text="🎲 Любое место", callback_data="bp:any")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+    return tg_ui.birthplace_kb(page, BIRTH_PLACES)
 
 
 def render_options_kb(opts: RenderOptions) -> InlineKeyboardMarkup:
-    mockup = opts.mockup
-    bg = opts.background
-    rows = [
-        [
-            InlineKeyboardButton(
-                text=("✓ " if mockup == MockupKind.BLANK.value else "") + "📄 Бланк",
-                callback_data="rm:blank",
-            ),
-            InlineKeyboardButton(
-                text=("✓ " if mockup == MockupKind.HAND.value else "") + "🤚 Рука+фон",
-                callback_data="rm:hand",
-            ),
-            InlineKeyboardButton(
-                text=("✓ " if mockup == MockupKind.ORIGINAL.value else "") + "🖼 Оригинал",
-                callback_data="rm:original",
-            ),
-        ],
-    ]
-    if mockup != MockupKind.BLANK.value:
-        bg_row = []
-        for i in range(1, 6):
-            bg_row.append(
-                InlineKeyboardButton(
-                    text=f"{'✓' if bg == i else ''}{i}",
-                    callback_data=f"rb:{i}",
-                )
-            )
-        rows.append(bg_row)
-        bg_row2 = []
-        for i in range(6, 11):
-            bg_row2.append(
-                InlineKeyboardButton(
-                    text=f"{'✓' if bg == i else ''}{i}",
-                    callback_data=f"rb:{i}",
-                )
-            )
-        rows.append(bg_row2)
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text=(
-                        "✓ "
-                        if (opts.generate_portrait or opts.portrait_path)
-                        else ""
-                    )
-                    + "🧑 Портрет (ИИ)",
-                    callback_data="rp:ai",
-                ),
-                InlineKeyboardButton(text="▶️ Отрисовать", callback_data="rq:go"),
-            ]
-        )
-    else:
-        rows.append([InlineKeyboardButton(text="▶️ Отрисовать", callback_data="rq:go")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+    return tg_ui.render_options_kb(
+        opts.background,
+        bool(opts.generate_portrait or opts.portrait_path),
+    )
 
 
 def _portrait_caption(opts: RenderOptions) -> str:
@@ -175,39 +104,53 @@ def _portrait_caption(opts: RenderOptions) -> str:
 
 
 async def _generate_portrait_preview(msg: Message, draft: RenderDraft) -> bool:
-    """Сгенерировать ИИ-портрет и показать превью. Возвращает успех."""
     if not draft.text_block.strip():
-        await msg.answer("❌ Сначала отправьте блок полей ВУ.")
+        await msg.answer(
+            f"{tg_ui.ce('stop')} Сначала сгенерируйте или вставьте блок полей.",
+            reply_markup=tg_ui.back_only_kb(),
+        )
         return False
     try:
         block = parse_client_block(draft.text_block)
         errors = validate_block(block)
         if errors:
-            await msg.answer("❌ " + html.escape("; ".join(errors)))
+            await msg.answer(
+                f"{tg_ui.ce('stop')} " + html.escape("; ".join(errors)),
+                reply_markup=tg_ui.back_only_kb(),
+            )
             return False
     except TextParseError as e:
-        await msg.answer(f"❌ {html.escape(str(e))}")
+        await msg.answer(
+            f"{tg_ui.ce('stop')} {html.escape(str(e))}",
+            reply_markup=tg_ui.back_only_kb(),
+        )
         return False
 
     from render_models import block_to_dict
 
-    await msg.answer("🧑 Генерирую ИИ-портрет через OpenAI… (10–60 сек)")
+    await msg.answer(f"{tg_ui.ce('clock')} Генерирую ИИ-портрет… (10–60 сек)")
     result = await asyncio.to_thread(
         generate_ai_portrait,
         block_to_dict(block),
         force=True,
     )
     if not result.ok or not result.path:
-        await msg.answer(f"❌ {html.escape(result.message)}")
+        await msg.answer(
+            f"{tg_ui.ce('stop')} {html.escape(result.message)}",
+            reply_markup=tg_ui.back_only_kb(),
+        )
         return False
 
     draft.options.portrait_path = str(result.path)
     draft.options.generate_portrait = False
     await msg.answer_photo(
         FSInputFile(str(result.path)),
-        caption=f"✅ {html.escape(result.message)} ({result.source})",
+        caption=f"{tg_ui.ce('ok')} {html.escape(result.message)} ({result.source})",
     )
-    await msg.answer("Настройки отрисовки:", reply_markup=render_options_kb(draft.options))
+    await msg.answer(
+        tg_ui.render_prompt_text(html.escape(scene_summary(draft.options)), draft.options.background),
+        reply_markup=render_options_kb(draft.options),
+    )
     return True
 
 
@@ -259,12 +202,25 @@ def _set_draft(uid: int, text_block: str) -> RenderDraft:
     return draft
 
 
+async def show_main_menu(msg: Message, settings: Settings, *, edit: bool = False) -> None:
+    q, alive = _queue_snapshot()
+    text = tg_ui.main_menu_text(q, alive)
+    kb = tg_ui.main_menu_kb(settings.web_base_url, settings.support_url)
+    if edit:
+        try:
+            await msg.edit_text(text, reply_markup=kb)
+            return
+        except Exception:
+            pass
+    await msg.answer(text, reply_markup=kb)
+
+
 async def _prompt_render_options(msg: Message, text_block: str) -> None:
     draft = _set_draft(msg.from_user.id, text_block)
-    summary = scene_summary(draft.options)
+    draft.options.mockup = coerce_panel_mockup(draft.options.mockup)
+    summary = html.escape(scene_summary(draft.options))
     await msg.answer(
-        f"Выберите мокап и фон.\n"
-        f"Сейчас: <b>{html.escape(summary)}</b>",
+        tg_ui.render_prompt_text(summary, draft.options.background),
         reply_markup=render_options_kb(draft.options),
     )
 
@@ -278,7 +234,7 @@ async def _enqueue_and_wait(
 ) -> None:
     queued = substitute_text_queued(
         draft.text_block,
-        mockup=draft.options.mockup,
+        mockup=coerce_panel_mockup(draft.options.mockup),
         background=draft.options.background,
         portrait_path=draft.options.portrait_path,
         generate_portrait=draft.options.generate_portrait,
@@ -286,7 +242,10 @@ async def _enqueue_and_wait(
         user_id=user_id,
     )
     if not queued.ok:
-        await msg.answer(f"❌ {html.escape(queued.message)}")
+        await msg.answer(
+            f"{tg_ui.ce('stop')} {html.escape(queued.message)}",
+            reply_markup=tg_ui.back_only_kb(),
+        )
         return
 
     summary = scene_summary(draft.options)
@@ -294,7 +253,7 @@ async def _enqueue_and_wait(
     if draft.options.portrait_path or draft.options.generate_portrait:
         portrait_line = f"\nПортрет: {html.escape(portrait_status_label(draft.options))}"
     await msg.answer(
-        f"⏳ Генерирую… (job <code>{queued.job_id}</code>)\n"
+        f"{tg_ui.ce('clock')} Генерирую… (job <code>{queued.job_id}</code>)\n"
         f"{html.escape(summary)}"
         f"{portrait_line}\n"
         f"Обычно 5–60 сек."
@@ -302,25 +261,30 @@ async def _enqueue_and_wait(
 
     done = await asyncio.to_thread(wait_substitute, queued.job_id, 900, 2.0)
     if not done.ok:
-        await msg.answer(f"❌ {html.escape(done.message)}")
+        await msg.answer(
+            f"{tg_ui.ce('stop')} {html.escape(done.message)}",
+            reply_markup=tg_ui.back_only_kb(),
+        )
         return
 
     jpg = done.jpg_path
     psd = done.psd_path
 
     if jpg and jpg.is_file():
-        await msg.answer_photo(FSInputFile(str(jpg)), caption="JPG превью")
+        await msg.answer_photo(FSInputFile(str(jpg)), caption=f"{tg_ui.ce('ok')} JPG превью")
     if psd and psd.is_file():
         await msg.answer_document(FSInputFile(str(psd)), caption="PSD (редактируемый)")
-    await msg.answer("✅ Готово")
+    await msg.answer(f"{tg_ui.ce('ok')} Готово", reply_markup=tg_ui.back_only_kb())
 
 
 async def deliver_record(msg: Message, rec: LicenceRecord, where: str, user_id: int) -> None:
     _last_record[user_id] = rec
     client_text = format_client_block(rec)
     debug_text = format_debug_block(rec)
-    await msg.answer(f"Подразделение: <b>{html.escape(where)}</b>")
-    await msg.answer(render_html(rec, debug=True))
+    await msg.answer(
+        f"{tg_ui.ce('ok')} Подразделение: <b>{html.escape(where)}</b>\n\n"
+        f"{render_html(rec, debug=True)}"
+    )
     await msg.answer_document(
         BufferedInputFile(client_text.encode("utf-8"), filename="vu_block.txt"),
         caption="Текстовый блок",
@@ -335,7 +299,7 @@ async def deliver_record(msg: Message, rec: LicenceRecord, where: str, user_id: 
     )
     draft = _set_draft(user_id, client_text)
     await msg.answer(
-        "Настройте отрисовку:",
+        tg_ui.render_prompt_text(html.escape(scene_summary(draft.options)), draft.options.background),
         reply_markup=render_options_kb(draft.options),
     )
 
@@ -357,15 +321,115 @@ def create_dispatcher(settings: Settings) -> Dispatcher:
     store = ProfileStore(settings.profiles_path)
     dp = Dispatcher()
 
-    @dp.message(Command("start", "help"))
+    async def _start_generate(msg: Message, uid: int) -> None:
+        profile = store.load(uid)
+        if profile:
+            await msg.answer(
+                f"{tg_ui.ce('star')} <b>Генерация записи</b>\n{profile_summary(profile)}\n\n"
+                f"Выберите подразделение:",
+                reply_markup=region_kb(0),
+            )
+            return
+        await msg.answer(ME_HINT, reply_markup=tg_ui.back_only_kb())
+
+    @dp.message(Command("start", "help", "menu"))
     async def cmd_start(msg: Message) -> None:
-        profile = store.load(msg.from_user.id)
-        cur = f"\n{profile_summary(profile)}\n" if profile else ""
-        await msg.answer(
-            f"<b>{BANNER}</b>\n\n"
-            "Генератор и отрисовка ВУ.\n"
-            f"{cur}\n{USAGE}\n\n"
-            "<b>Команды:</b> /me · /render · /portrait · /status · /admin · /forget"
+        await show_main_menu(msg, settings)
+
+    @dp.callback_query(F.data == "m:home")
+    async def cb_home(cq: CallbackQuery) -> None:
+        await cq.answer()
+        await show_main_menu(cq.message, settings, edit=True)
+
+    @dp.callback_query(F.data == "m:gen")
+    async def cb_gen(cq: CallbackQuery) -> None:
+        await cq.answer()
+        await _start_generate(cq.message, cq.from_user.id)
+
+    @dp.callback_query(F.data == "m:ren")
+    async def cb_ren(cq: CallbackQuery) -> None:
+        uid = cq.from_user.id
+        text_block = ""
+        rec = _last_record.get(uid)
+        if rec:
+            text_block = format_client_block(rec)
+        elif uid in _drafts:
+            text_block = _drafts[uid].text_block
+        if not text_block.strip():
+            await cq.answer()
+            await cq.message.answer(
+                f"{tg_ui.ce('warning')} Нет блока для отрисовки.\n"
+                f"Сначала сгенерируйте запись или вставьте блок полей.",
+                reply_markup=tg_ui.back_only_kb(),
+            )
+            return
+        await cq.answer()
+        await _prompt_render_options(cq.message, text_block)
+
+    @dp.callback_query(F.data == "m:jobs")
+    async def cb_jobs(cq: CallbackQuery) -> None:
+        from photoshop_server import queue_jobs
+
+        await cq.answer()
+        rows = queue_jobs(limit=8)
+        if not rows:
+            await cq.message.answer(
+                f"{tg_ui.ce('briefcase')} <b>Мои задачи</b>\nОчередь пуста.",
+                reply_markup=tg_ui.jobs_kb(),
+            )
+            return
+        lines = [f"{tg_ui.ce('briefcase')} <b>Последние задачи</b>"]
+        for j in rows:
+            st = j.get("status") or "—"
+            jid = j.get("job_id") or "—"
+            title = j.get("title") or ""
+            extra = f" · {html.escape(title)}" if title else ""
+            lines.append(f"• <code>{html.escape(str(jid)[:12])}</code> — {html.escape(st)}{extra}")
+        await cq.message.answer("\n".join(lines), reply_markup=tg_ui.jobs_kb())
+
+    @dp.callback_query(F.data == "m:port")
+    async def cb_port(cq: CallbackQuery) -> None:
+        await cq.answer()
+        await cq.message.answer(
+            f"{tg_ui.ce('user')} <b>Портрет</b>\n"
+            f"Сгенерировать через OpenAI или пришлите фото с подписью <code>/portrait</code>.",
+            reply_markup=tg_ui.portrait_kb(),
+        )
+
+    @dp.callback_query(F.data == "m:prof")
+    async def cb_prof(cq: CallbackQuery) -> None:
+        await cq.answer()
+        profile = store.load(cq.from_user.id)
+        if profile:
+            body = profile_summary(profile)
+        else:
+            body = "Профиль не сохранён.\n" + ME_HINT
+        await cq.message.answer(
+            f"{tg_ui.ce('bookmark')} <b>Профиль</b>\n{body}",
+            reply_markup=tg_ui.profile_kb(),
+        )
+
+    @dp.callback_query(F.data == "m:forget")
+    async def cb_forget(cq: CallbackQuery) -> None:
+        uid = cq.from_user.id
+        store.delete(uid)
+        _last_record.pop(uid, None)
+        _drafts.pop(uid, None)
+        await cq.answer("Профиль удалён")
+        await cq.message.answer(
+            f"{tg_ui.ce('ok')} Профиль сброшен.",
+            reply_markup=tg_ui.back_only_kb(),
+        )
+
+    @dp.callback_query(F.data == "m:stat")
+    async def cb_stat(cq: CallbackQuery) -> None:
+        from admin_tools import format_status_text
+
+        await cq.answer()
+        await cq.message.answer(
+            f"{tg_ui.ce('monitor')} <b>Статус</b>\n"
+            f"<pre>{html.escape(format_status_text())}</pre>",
+            reply_markup=tg_ui.status_kb(admin=settings.is_admin(cq.from_user.id)),
         )
 
     @dp.message(Command("forget", "clear"))
@@ -374,9 +438,9 @@ def create_dispatcher(settings: Settings) -> Dispatcher:
         if store.delete(uid):
             _last_record.pop(uid, None)
             _drafts.pop(uid, None)
-            await msg.answer("Профиль удалён.")
+            await msg.answer(f"{tg_ui.ce('ok')} Профиль удалён.", reply_markup=tg_ui.back_only_kb())
         else:
-            await msg.answer("Профиль не был сохранён.")
+            await msg.answer("Профиль не был сохранён.", reply_markup=tg_ui.back_only_kb())
 
     @dp.message(Command("me"))
     async def cmd_me(msg: Message, command: CommandObject) -> None:
@@ -385,20 +449,23 @@ def create_dispatcher(settings: Settings) -> Dispatcher:
             profile = store.load(uid)
             if profile:
                 await msg.answer(
-                    f"Сохранено:\n{profile_summary(profile)}",
+                    f"{tg_ui.ce('bookmark')} Сохранено:\n{profile_summary(profile)}",
                     reply_markup=region_kb(0),
                 )
             else:
-                await msg.answer(USAGE)
+                await msg.answer(ME_HINT, reply_markup=tg_ui.back_only_kb())
             return
         try:
             ident, place = parse_me(command.args)
         except IdentityError as e:
-            await msg.answer(f"❌ {html.escape(str(e))}\n\n{USAGE}")
+            await msg.answer(
+                f"{tg_ui.ce('stop')} {html.escape(str(e))}\n\n{ME_HINT}",
+                reply_markup=tg_ui.back_only_kb(),
+            )
             return
         store.save_identity(uid, ident, place)
         await msg.answer(
-            f"✅ <code>{html.escape(ident.surname)} {html.escape(ident.given)}</code>\n"
+            f"{tg_ui.ce('ok')} <code>{html.escape(ident.surname)} {html.escape(ident.given)}</code>\n"
             f"ДР {ident.birth_date}"
         )
         if place:
@@ -417,12 +484,18 @@ def create_dispatcher(settings: Settings) -> Dispatcher:
             elif uid in _drafts:
                 text_block = _drafts[uid].text_block
             else:
-                await msg.answer("Нет данных для отрисовки.")
+                await msg.answer(
+                    f"{tg_ui.ce('warning')} Нет данных для отрисовки.",
+                    reply_markup=tg_ui.back_only_kb(),
+                )
                 return
         try:
             parse_client_block(text_block)
         except TextParseError as e:
-            await msg.answer(f"❌ {html.escape(str(e))}")
+            await msg.answer(
+                f"{tg_ui.ce('stop')} {html.escape(str(e))}",
+                reply_markup=tg_ui.back_only_kb(),
+            )
             return
         await _prompt_render_options(msg, text_block)
 
@@ -434,12 +507,18 @@ def create_dispatcher(settings: Settings) -> Dispatcher:
         if arg == "generate":
             draft = _drafts.get(uid)
             if not draft:
-                await msg.answer("Сначала отправьте блок полей ВУ.")
+                await msg.answer(
+                    f"{tg_ui.ce('warning')} Сначала отправьте блок полей.",
+                    reply_markup=tg_ui.back_only_kb(),
+                )
                 return
             await _generate_portrait_preview(msg, draft)
             return
 
-        await msg.answer("Отправьте фото ответом на это сообщение или с подписью <code>/portrait</code>.")
+        await msg.answer(
+            f"{tg_ui.ce('user')} Отправьте фото с подписью <code>/portrait</code>.",
+            reply_markup=tg_ui.portrait_kb(),
+        )
 
     @dp.message(F.photo)
     async def on_photo(msg: Message) -> None:
@@ -456,7 +535,10 @@ def create_dispatcher(settings: Settings) -> Dispatcher:
         await msg.bot.download_file(file.file_path, buf)
         result = prepare_upload(buf.getvalue(), msg.from_user.id)
         if not result.ok or not result.path:
-            await msg.answer(f"❌ {html.escape(result.message or 'Ошибка загрузки')}")
+            await msg.answer(
+                f"{tg_ui.ce('stop')} {html.escape(result.message or 'Ошибка загрузки')}",
+                reply_markup=tg_ui.back_only_kb(),
+            )
             return
         draft = _drafts.get(msg.from_user.id) or RenderDraft(text_block="")
         draft.options.portrait_path = str(result.path)
@@ -464,11 +546,11 @@ def create_dispatcher(settings: Settings) -> Dispatcher:
         _drafts[msg.from_user.id] = draft
         await msg.answer_photo(
             FSInputFile(str(result.path)),
-            caption=f"✅ Портрет: <code>{result.path.name}</code>",
+            caption=f"{tg_ui.ce('ok')} Портрет: <code>{result.path.name}</code>",
         )
         if draft.text_block.strip():
             await msg.answer(
-                "Настройки отрисовки:",
+                tg_ui.render_prompt_text(html.escape(scene_summary(draft.options)), draft.options.background),
                 reply_markup=render_options_kb(draft.options),
             )
 
@@ -477,7 +559,10 @@ def create_dispatcher(settings: Settings) -> Dispatcher:
         try:
             parse_client_block(msg.text or "")
         except TextParseError as e:
-            await msg.answer(f"❌ {html.escape(str(e))}")
+            await msg.answer(
+                f"{tg_ui.ce('stop')} {html.escape(str(e))}",
+                reply_markup=tg_ui.back_only_kb(),
+            )
             return
         await _prompt_render_options(msg, msg.text or "")
 
@@ -488,14 +573,10 @@ def create_dispatcher(settings: Settings) -> Dispatcher:
         if not draft:
             await cq.answer("Сначала отправьте блок полей", show_alert=True)
             return
-        draft.options.mockup = cq.data.split(":", 1)[1]
+        draft.options.mockup = coerce_panel_mockup(cq.data.split(":", 1)[1])
         draft.options = normalize_options_for_mockup(draft.options)
-        await cq.answer(MOCKUPS[draft.options.mockup].title)
+        await cq.answer("Рука + фон")
         await cq.message.edit_reply_markup(reply_markup=render_options_kb(draft.options))
-        await cq.message.edit_text(
-            f"Сейчас: <b>{html.escape(scene_summary(draft.options))}</b>",
-            reply_markup=render_options_kb(draft.options),
-        )
 
     @dp.callback_query(F.data.startswith("rb:"))
     async def cb_background(cq: CallbackQuery) -> None:
@@ -504,19 +585,12 @@ def create_dispatcher(settings: Settings) -> Dispatcher:
         if not draft:
             await cq.answer("Нет черновика", show_alert=True)
             return
-        if draft.options.mockup == MockupKind.BLANK.value:
-            await cq.answer("Фон доступен для «Рука+фон» / «Оригинал»", show_alert=True)
-            return
+        draft.options.mockup = coerce_panel_mockup(draft.options.mockup)
         draft.options.background = int(cq.data.split(":", 1)[1])
         await cq.answer(f"Фон #{draft.options.background}")
-        await cq.message.edit_reply_markup(reply_markup=render_options_kb(draft.options))
+        summary = html.escape(scene_summary(draft.options))
         await cq.message.edit_text(
-            f"Выберите мокап и фон.\n"
-            f"Сейчас: <b>{html.escape(scene_summary(draft.options))}</b>\n\n"
-            f"Фон 1–10 — сцена за карточкой (стол / студия), не пластик ВУ.\n"
-            f"«Рука+фон» — рука на сменных фонах 1–10. "
-            f"«Оригинал» — та же рука с карточкой, фон — стена. "
-            f"«Бланк» — только пластик ВУ.",
+            tg_ui.render_prompt_text(summary, draft.options.background),
             reply_markup=render_options_kb(draft.options),
         )
 
@@ -525,22 +599,19 @@ def create_dispatcher(settings: Settings) -> Dispatcher:
         uid = cq.from_user.id
         draft = _drafts.get(uid)
         if not draft:
-            await cq.answer("Нет черновика", show_alert=True)
+            await cq.answer("Нет черновика — сначала сгенерируйте запись", show_alert=True)
             return
-        if draft.options.mockup == MockupKind.BLANK.value:
-            await cq.answer("Портрет только для «Рука+фон» / «Оригинал»", show_alert=True)
-            return
+        draft.options.mockup = coerce_panel_mockup(draft.options.mockup)
         draft.options.generate_portrait = True
         draft.options.portrait_path = None
-        await cq.answer("Генерирую портрет через OpenAI…")
+        await cq.answer("Генерирую портрет…")
         ok = await _generate_portrait_preview(cq.message, draft)
         if not ok:
-            # Keep the flag: worker will generate again at render time.
             draft.options.generate_portrait = True
             await cq.message.answer(
-                "Портрет не готов сейчас. Нажмите «Отрисовать» — worker запросит OpenAI ещё раз."
+                f"{tg_ui.ce('warning')} Портрет не готов сейчас. Нажмите «Отрисовать» — worker запросит ещё раз.",
+                reply_markup=render_options_kb(draft.options),
             )
-            await cq.message.edit_reply_markup(reply_markup=render_options_kb(draft.options))
 
     @dp.callback_query(F.data == "rq:go")
     async def cb_render_go(cq: CallbackQuery) -> None:
@@ -580,7 +651,7 @@ def create_dispatcher(settings: Settings) -> Dispatcher:
         uid = cq.from_user.id
         profile = store.load(uid)
         if not profile:
-            await cq.answer("Сначала /me", show_alert=True)
+            await cq.answer("Сначала задайте профиль", show_alert=True)
             return
         arg = cq.data.split(":", 1)[1]
         place = None if arg == "any" else BIRTH_PLACES[int(arg)]
@@ -600,7 +671,7 @@ def create_dispatcher(settings: Settings) -> Dispatcher:
         uid = cq.from_user.id
         profile = store.load(uid)
         if not profile:
-            await cq.answer("Сначала /me", show_alert=True)
+            await cq.answer("Сначала задайте профиль", show_alert=True)
             return
         code = cq.data.split(":", 1)[1]
         if code != "any" and code not in REGIONS:
@@ -610,14 +681,19 @@ def create_dispatcher(settings: Settings) -> Dispatcher:
         profile = store.load(uid)
         await cq.answer("Генерирую…")
         rec = generate_record(profile, None if code == "any" else code)
-        await cq.message.edit_text(f"Подразделение: <b>{html.escape(region_label(code))}</b>")
+        await cq.message.edit_text(
+            f"{tg_ui.ce('ok')} Подразделение: <b>{html.escape(region_label(code))}</b>"
+        )
         await deliver_record(cq.message, rec, region_label(code), uid)
 
     @dp.message(Command("status"))
     async def cmd_status(msg: Message) -> None:
         from admin_tools import format_status_text
 
-        await msg.answer(f"<pre>{html.escape(format_status_text())}</pre>")
+        await msg.answer(
+            f"{tg_ui.ce('monitor')} <b>Статус</b>\n<pre>{html.escape(format_status_text())}</pre>",
+            reply_markup=tg_ui.status_kb(admin=settings.is_admin(msg.from_user.id)),
+        )
 
     @dp.message(Command("admin"))
     async def cmd_admin(msg: Message) -> None:
@@ -630,17 +706,12 @@ def create_dispatcher(settings: Settings) -> Dispatcher:
         q = dash["queue"]
         web = settings.web_base_url
         await msg.answer(
-            f"<b>Админ-панель</b>\n\n"
+            f"{tg_ui.ce('crown')} <b>Админ-панель</b>\n\n"
             f"<pre>{html.escape(format_status_text())}</pre>\n\n"
             f"Очередь: done={q['done']} failed={q['failed']}\n"
             f"Scene OK: {'да' if dash['scene_verify'].get('ok') else 'нет'}\n\n"
-            f"Веб: <a href=\"{html.escape(web)}\">{html.escape(web)}</a>\n"
-            f"API: <a href=\"{html.escape(web)}/docs\">/docs</a>",
-            reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [InlineKeyboardButton(text="♻ Восстановить зависшие", callback_data="adm:recover")],
-                ]
-            ),
+            f"Веб: <a href=\"{html.escape(web)}\">{html.escape(web)}</a>",
+            reply_markup=tg_ui.status_kb(admin=True),
         )
 
     @dp.callback_query(F.data == "adm:recover")
@@ -654,6 +725,31 @@ def create_dispatcher(settings: Settings) -> Dispatcher:
         await cq.answer(f"Восстановлено: {raw['recovered']}", show_alert=True)
 
     return dp
+
+
+async def configure_bot_chrome(bot: Bot, settings: Settings) -> None:
+    await bot.set_my_commands(
+        [
+            BotCommand(command="start", description="Меню"),
+            BotCommand(command="me", description="Профиль ФИО"),
+            BotCommand(command="render", description="Отрисовать"),
+            BotCommand(command="portrait", description="Портрет"),
+            BotCommand(command="status", description="Статус очереди"),
+        ]
+    )
+    app = tg_ui.panel_webapp(settings.web_base_url)
+    if app:
+        await bot.set_chat_menu_button(
+            menu_button=MenuButtonWebApp(text="Панель", web_app=app)
+        )
+        log.info("Mini App «Панель»: %s", settings.web_base_url)
+    else:
+        await bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+        log.warning(
+            "WEB_BASE_URL=%s — не HTTPS. Кнопка Mini App «Панель» не ставится. "
+            "Повесьте домен на 443 → 8080 и задайте WEB_BASE_URL=https://ваш.домен",
+            settings.web_base_url,
+        )
 
 
 async def run() -> None:
@@ -670,6 +766,7 @@ async def run() -> None:
     bot = Bot(settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     me = await bot.get_me()
     log.info("бот @%s, queue=%s", me.username, settings.render_queue_dir)
+    await configure_bot_chrome(bot, settings)
     await dp.start_polling(bot)
 
 

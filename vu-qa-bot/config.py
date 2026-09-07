@@ -26,6 +26,7 @@ class Settings:
     photoshop_exe: Path | None
     admin_users: frozenset[int]
     web_base_url: str
+    support_url: str
 
     @classmethod
     def load(cls) -> Settings:
@@ -68,6 +69,7 @@ class Settings:
             admin = set(allowed)
 
         web_base = os.getenv("WEB_BASE_URL", "http://localhost:8080").strip().rstrip("/")
+        support = os.getenv("SUPPORT_URL", "https://t.me/arxixx").strip()
 
         return cls(
             bot_token=token,
@@ -81,6 +83,7 @@ class Settings:
             render_queue_dir=queue_dir,
             photoshop_exe=photoshop_exe,
             web_base_url=web_base,
+            support_url=support,
         )
 
     def is_admin(self, user_id: int) -> bool:

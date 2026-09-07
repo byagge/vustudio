@@ -31,7 +31,7 @@ def main() -> int:
         help="Текстовый блок inline (task2 §9: render_cli.py --text \"...\")",
     )
     p.add_argument("--text-file", type=Path, default=None, help="Файл с блоком (task3 §12)")
-    p.add_argument("--mockup", choices=list(list_mockups()), default="blank")
+    p.add_argument("--mockup", choices=list(list_mockups()), default="hand")
     p.add_argument("--background", type=int, default=1)
     p.add_argument("--dry-run", action="store_true", help="Только job JSON, без Photoshop")
     p.add_argument("--queue", action="store_true", help="Через render-worker")

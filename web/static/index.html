@@ -2,7 +2,10 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0d0d0d">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
   <title>VU Studio</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
   <link rel="apple-touch-icon" href="/static/favicon.svg">
@@ -218,7 +221,7 @@
       <!-- ===== RENDER ===== -->
       <section id="page-render" class="page">
         <header class="page-head"><h1>Отрисовка</h1></header>
-        <p class="lede">Подстановка данных в Photoshop-мокап.</p>
+        <p class="lede">Подстановка данных в мокап: рука, фон 1–10, портрет.</p>
 
         <div class="card">
           <form id="renderForm" class="grid-2">
@@ -226,11 +229,11 @@
               <span class="lbl">Блок полей</span>
               <textarea id="renderText" name="text_block" rows="12" required placeholder="1  Фамилия …"></textarea>
             </div>
-            <div class="field">
+            <div class="field" id="mockupField" hidden>
               <span class="lbl">Вариант мокапа</span>
               <div class="sel" id="selMockup"></div>
             </div>
-            <div class="field" id="bgField">
+            <div class="field span-2" id="bgField">
               <span class="lbl">Фон <span class="lbl-hint" id="bgHint"></span></span>
               <div class="sel" id="selBackground"></div>
             </div>
@@ -463,8 +466,49 @@
           </div>
         </div>
       </section>
+
+      <section id="page-more" class="page">
+        <header class="page-head"><h1>Ещё</h1></header>
+        <div class="more-list">
+          <button type="button" class="more-row" data-goto="system">
+            <span class="ic" data-icon="server" data-icon-size="18"></span>
+            <span>Система</span>
+          </button>
+          <button type="button" class="more-row" data-goto="settings">
+            <span class="ic" data-icon="settings" data-icon-size="18"></span>
+            <span>Настройки</span>
+          </button>
+          <button type="button" class="more-row" data-goto="help">
+            <span class="ic" data-icon="circle-help" data-icon-size="18"></span>
+            <span>Помощь</span>
+          </button>
+        </div>
+      </section>
     </main>
   </div>
+
+  <nav class="bottom-nav" id="bottomNav" aria-label="Навигация">
+    <button type="button" class="bn-item active" data-page="home">
+      <span class="ic" data-icon="house" data-icon-size="22"></span>
+      <span>Главная</span>
+    </button>
+    <button type="button" class="bn-item" data-page="generate">
+      <span class="ic" data-icon="sparkles" data-icon-size="22"></span>
+      <span>Генерация</span>
+    </button>
+    <button type="button" class="bn-item" data-page="render">
+      <span class="ic" data-icon="layers" data-icon-size="22"></span>
+      <span>Отрисовка</span>
+    </button>
+    <button type="button" class="bn-item" data-page="jobs">
+      <span class="ic" data-icon="list-checks" data-icon-size="22"></span>
+      <span>Задачи</span>
+    </button>
+    <button type="button" class="bn-item" data-page="more">
+      <span class="ic" data-icon="menu" data-icon-size="22"></span>
+      <span>Ещё</span>
+    </button>
+  </nav>
 
   <!-- ===== COMMAND PALETTE ===== -->
   <div class="overlay hidden" id="palette">
@@ -493,6 +537,7 @@
   <div class="tip" id="tip"></div>
   <div class="toast-stack" id="toasts"></div>
 
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script src="/static/icons.js"></script>
   <script src="/static/app.js"></script>
 </body>

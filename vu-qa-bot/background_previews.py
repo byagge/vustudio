@@ -22,7 +22,7 @@ PREVIEW_DIR = Path(
     __import__("os").getenv("BACKGROUND_PREVIEW_DIR", str(ROOT.parent / "assets" / "backgrounds"))
 )
 SUFFIXES = (".jpg", ".jpeg", ".png", ".webp")
-THUMB_MAX_SIDE = 360
+THUMB_MAX_SIDE = 480
 
 _extract_lock = threading.Lock()
 _extract_state: dict[str, Any] = {"running": False, "done": 0, "total": 0, "message": ""}
@@ -46,6 +46,7 @@ def list_previews(template_name: str = "mockup_hand") -> list[dict[str, Any]]:
                 "id": bg_id,
                 "layer_name": background_layer_name(scene, bg_id),
                 "has_preview": path is not None,
+                "updated": int(path.stat().st_mtime) if path else 0,
             }
         )
     return out
