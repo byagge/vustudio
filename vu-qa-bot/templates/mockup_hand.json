@@ -53,7 +53,8 @@
     "original_layer": "Оригинал",
     "photo_smart_object": "Photo",
     "photo_layer_aliases": ["Photo", "photo", "Фото", "фото", "Portrait", "portrait"],
-    "card_smart_objects": ["Front"],
+    "card_smart_objects": ["Front", "Back"],
+    "back_smart_objects": ["Back"],
     "card_wrappers": ["Слой 0 копия"],
     "skip_smart_objects": ["Рука (ВКЛ смарт-фильтр=тепло)"]
   },

@@ -34,6 +34,7 @@ from photoshop_text import (
 )
 from vu_testdata import (
     BIRTH_PLACES,
+    MOCKUP_CATEGORIES,
     MUTATORS,
     REGIONS,
     IdentityError,
@@ -289,13 +290,19 @@ def create_app() -> FastAPI:
 
     @app.post("/api/v1/portrait/upload", response_model=PortraitUploadResponse)
     async def portrait_upload(file: UploadFile = File(...), _: None = Depends(auth)):
+        import asyncio
+
         from portrait_service import prepare_upload
 
         data = await file.read()
         if len(data) < 100:
             raise HTTPException(400, "Файл слишком мал")
         suffix = Path(file.filename or "photo.jpg").suffix or ".jpg"
-        result = prepare_upload(data, user_id=0, suffix=suffix)
+        import uuid
+
+        result = await asyncio.to_thread(
+            prepare_upload, data, f"web_{uuid.uuid4().hex[:12]}", suffix=suffix
+        )
         if not result.ok:
             raise HTTPException(400, result.message)
         return PortraitUploadResponse(
@@ -338,6 +345,7 @@ def create_app() -> FastAPI:
                     fields=done.fields,
                     psd_path=str(done.psd_path) if done.psd_path else None,
                     jpg_path=str(done.jpg_path) if done.jpg_path else None,
+                    jpg_back_path=str(done.jpg_back_path) if getattr(done, "jpg_back_path", None) else None,
                 )
             raise HTTPException(503, done.message)
 
@@ -360,6 +368,7 @@ def create_app() -> FastAPI:
             fields=status.fields,
             psd_path=str(status.psd_path) if status.psd_path else None,
             jpg_path=str(status.jpg_path) if status.jpg_path else None,
+            jpg_back_path=str(status.jpg_back_path) if getattr(status, "jpg_back_path", None) else None,
         )
 
     @app.get("/api/v1/render/download/{kind}")
@@ -416,6 +425,7 @@ def create_app() -> FastAPI:
             region_code=body.region_code,
             birth_place=place or body.birthplace,
             valid_now=body.valid_now,
+            allowed_categories=MOCKUP_CATEGORIES,
         )
         rules = validate(rec.to_dict())
         return GenerateResponse(

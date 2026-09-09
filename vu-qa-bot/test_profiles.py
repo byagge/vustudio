@@ -36,6 +36,14 @@ def test_profile_region_persistence():
         assert store.delete(1)
         assert store.load(1) is None
 
+        store.touch(7, username="demo", first_name="Demo")
+        store.bump(7, "generations", 2)
+        store.bump(7, "renders")
+        st = store.stats(7)
+        assert st["username"] == "demo"
+        assert st["generations"] == 2
+        assert st["renders"] == 1
+
 
 if __name__ == "__main__":
     test_profile_region_persistence()

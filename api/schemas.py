@@ -95,6 +95,7 @@ class RenderResponse(BaseModel):
     fields: dict | None = None
     psd_path: str | None = None
     jpg_path: str | None = None
+    jpg_back_path: str | None = None
 
 
 class PortraitGenerateRequest(BaseModel):
@@ -172,6 +173,7 @@ class QueueJobItem(BaseModel):
     title: str = ""
     error: str | None = None
     jpg_path: str | None = None
+    jpg_back_path: str | None = None
     psd_path: str | None = None
 
 

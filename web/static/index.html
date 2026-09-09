@@ -154,7 +154,8 @@
                 <div class="track"><div class="track-fill" id="homeTrackFill"></div></div>
                 <p class="note" id="homeJobNote"></p>
                 <div class="row-actions" id="homeJobActions" hidden>
-                  <a class="btn primary sm" id="homeDlJpg" href="#"><span class="ic" data-icon="download" data-icon-size="14"></span> JPG</a>
+                  <a class="btn primary sm" id="homeDlJpg" href="#"><span class="ic" data-icon="download" data-icon-size="14"></span> Лицевая</a>
+                  <a class="btn primary sm" id="homeDlJpgBack" href="#" hidden><span class="ic" data-icon="download" data-icon-size="14"></span> Оборот</a>
                   <a class="btn secondary sm" id="homeDlPsd" href="#"><span class="ic" data-icon="download" data-icon-size="14"></span> PSD</a>
                 </div>
               </div>
@@ -240,10 +241,10 @@
             <label class="switch-row span-2">
               <input type="checkbox" id="genPortrait">
               <span class="switch"></span>
-              <span class="switch-text">Сгенерировать портрет (ИИ)</span>
+              <span class="switch-text">Сгенерировать портрет с нуля (ИИ)</span>
             </label>
             <div class="field span-2">
-              <span class="lbl">Свой портрет — необязательно</span>
+              <span class="lbl">Свой портрет — ИИ вырежет фон и сделает фото на документ</span>
               <div class="file-drop" id="fileDrop">
                 <span class="ic dim" data-icon="upload" data-icon-size="18"></span>
                 <span id="fileName">Перетащите файл или нажмите для выбора</span>
@@ -266,9 +267,11 @@
           <div class="track"><div class="track-fill" id="renderTrackFill"></div></div>
           <div id="renderSteps" class="timeline"></div>
           <p class="note" id="renderMessage"></p>
-          <div class="preview" id="renderPreview" hidden><img id="renderPreviewImg" alt="Превью"></div>
+          <div class="preview" id="renderPreview" hidden><img id="renderPreviewImg" alt="Лицевая"></div>
+          <div class="preview" id="renderPreviewBack" hidden><img id="renderPreviewBackImg" alt="Оборот"></div>
           <div class="row-actions" id="renderDownloads" hidden>
-            <a class="btn primary" id="dlJpg" href="#"><span class="ic" data-icon="download" data-icon-size="14"></span> Скачать JPG</a>
+            <a class="btn primary" id="dlJpg" href="#"><span class="ic" data-icon="download" data-icon-size="14"></span> JPG лицевая</a>
+            <a class="btn primary" id="dlJpgBack" href="#" hidden><span class="ic" data-icon="download" data-icon-size="14"></span> JPG оборот</a>
             <a class="btn secondary" id="dlPsd" href="#"><span class="ic" data-icon="download" data-icon-size="14"></span> Скачать PSD</a>
           </div>
         </div>
@@ -292,12 +295,13 @@
           <button type="button" class="chip" data-status="failed">Ошибки <span class="chip-n" data-n="failed">0</span></button>
         </div>
 
-        <div class="card no-pad">
+        <div class="jobs-table-wrap card no-pad">
           <table class="table">
             <thead><tr><th>Задача</th><th>Мокап</th><th>Обновлена</th><th>Статус</th><th></th></tr></thead>
             <tbody id="jobsBody"></tbody>
           </table>
         </div>
+        <div class="jobs-cards" id="jobsCards"></div>
       </section>
 
       <!-- ===== SYSTEM ===== -->
@@ -434,10 +438,9 @@
               <summary>Управление из Telegram</summary>
               <div class="acc-body">
                 <ul class="dl">
-                  <li><code>/render</code> отрисовать мокап</li>
-                  <li><code>/portrait</code> сгенерировать портрет</li>
-                  <li><code>/status</code> статус очереди и worker</li>
-                  <li><code>/admin</code> админ-панель с восстановлением задач</li>
+                  <li>Все действия — кнопками в чате с ботом: генерация, отрисовка, задачи, портрет, профиль, статус</li>
+                  <li>«Мои задачи» открывает карточку: данные документа, JPG и PSD</li>
+                  <li>«Открыть панель» запускает эту веб-панель внутри Telegram</li>
                 </ul>
               </div>
             </details>

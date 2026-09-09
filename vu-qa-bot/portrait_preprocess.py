@@ -30,6 +30,21 @@ def validate_image_bytes(data: bytes) -> None:
         raise ValueError("Не удалось прочитать изображение") from e
 
 
+def _flatten_cutout(im: Image.Image, paper_gray: tuple[int, int, int] = (228, 228, 228)) -> Image.Image:
+    """RGBA/P с прозрачностью → серый фон бланка, иначе RGB."""
+    has_alpha = im.mode in {"RGBA", "LA"} or (im.mode == "P" and "transparency" in im.info)
+    if has_alpha:
+        rgba = im.convert("RGBA")
+        bg = Image.new("RGB", rgba.size, paper_gray)
+        bg.paste(rgba, mask=rgba.split()[-1])
+        return bg
+    if im.mode == "L":
+        return im.convert("RGB")
+    if im.mode != "RGB":
+        return im.convert("RGB")
+    return im
+
+
 def _cover_crop(im: Image.Image, target_w: int, target_h: int) -> Image.Image:
     """Object-fit: cover — как в CSS, для вставки в SO Photo."""
     src_w, src_h = im.size
@@ -65,13 +80,15 @@ def prepare_portrait_file(
     destination: Path,
     *,
     settings: PortraitSettings | None = None,
+    face_focus: bool = True,
 ) -> Path:
     """
     Нормализация под бланк ВУ:
     - EXIF orientation
-    - sRGB
+    - sRGB / вырезанный фон на серую бумагу
     - лёгкая коррекция контраста/резкости
     - crop 3×4 (390×507 по умолчанию)
+    - face_focus: для селфи обрезает верх кадра; для ИИ-ID фото — False
     """
     cfg = settings or PortraitSettings.from_env()
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -82,15 +99,13 @@ def prepare_portrait_file(
         im = Image.open(source)
     with im:
         im = ImageOps.exif_transpose(im)
-        if im.mode not in ("RGB", "L"):
-            im = im.convert("RGB")
-        elif im.mode == "L":
-            im = im.convert("RGB")
+        im = _flatten_cutout(im)
 
-        # Лицевая зона — верхние ~55% кадра (типичное кадрирование ID photo)
         w, h = im.size
-        focus = im.crop((0, 0, w, int(h * 0.72)))
-        focus = _cover_crop(focus, cfg.width, cfg.height)
+        if face_focus:
+            # Лицевая зона — верхние ~72% кадра (типичное кадрирование селфи)
+            im = im.crop((0, 0, w, max(1, int(h * 0.72))))
+        focus = _cover_crop(im, cfg.width, cfg.height)
 
         focus = _match_document_background(focus)
         focus = ImageEnhance.Contrast(focus).enhance(1.06)

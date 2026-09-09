@@ -54,6 +54,7 @@ class RenderTask:
     updated_at: str = ""
     psd_path: str | None = None
     jpg_path: str | None = None
+    jpg_back_path: str | None = None
     error: str | None = None
     chat_id: int | None = None
     user_id: int | None = None
@@ -103,6 +104,7 @@ class RenderTask:
             updated_at=data.get("updated_at", ""),
             psd_path=data.get("psd_path"),
             jpg_path=data.get("jpg_path"),
+            jpg_back_path=data.get("jpg_back_path"),
             error=data.get("error"),
             chat_id=data.get("chat_id"),
             user_id=data.get("user_id"),

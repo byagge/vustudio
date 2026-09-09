@@ -70,6 +70,26 @@ def admin_recover_stale() -> dict[str, Any]:
     }
 
 
+def format_status_html(web_url: str = "") -> str:
+    import tg_ui
+
+    st = get_server_status()
+    q = st.queue
+    hb = st.worker
+    return tg_ui.status_screen(
+        mode=st.mode,
+        worker_alive=st.worker_alive,
+        pending=q.pending,
+        processing=q.processing,
+        done=q.done,
+        failed=q.failed,
+        photoshop_ok=st.photoshop_available,
+        message=st.message or "",
+        current_job=hb.current_job_id if hb and hb.current_job_id else None,
+        last_error=hb.last_error if hb and hb.last_error else None,
+    )
+
+
 def format_status_text() -> str:
     st = get_server_status()
     q = st.queue

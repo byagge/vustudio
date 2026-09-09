@@ -155,9 +155,14 @@ def main() -> int:
             elapsed_ms = int((time.perf_counter() - started) * 1000)
             if result.status == "ok":
                 for p in result.output_paths:
-                    if p.suffix.lower() in {".jpg", ".jpeg"}:
-                        task.jpg_path = str(p)
-                    elif p.suffix.lower() in {".psd", ".psb"}:
+                    name = p.name.lower()
+                    suf = p.suffix.lower()
+                    if suf in {".jpg", ".jpeg"}:
+                        if name.endswith("_back.jpg") or p.stem.endswith("_back"):
+                            task.jpg_back_path = str(p)
+                        else:
+                            task.jpg_path = str(p)
+                    elif suf in {".psd", ".psb"}:
                         task.psd_path = str(p)
                 queue.complete(task)
                 jobs_processed += 1

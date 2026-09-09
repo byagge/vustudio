@@ -59,8 +59,8 @@ const hydrate = (el) => window.Icons && Icons.hydrate(el);
   try {
     tg.ready();
     tg.expand();
-    const mobile = ["ios", "android", "android_x"].includes(tg.platform);
-    if (mobile) document.documentElement.classList.add("app-shell");
+    if (typeof tg.disableVerticalSwipes === "function") tg.disableVerticalSwipes();
+    document.documentElement.classList.add("app-shell");
   } catch {}
 })();
 const esc = (s) =>
@@ -209,7 +209,7 @@ const MODALS = {
          <li>Photoshop worker на Windows подставляет текст, фон и портрет</li>
          <li>ИИ-портрет через OpenAI или офлайн-заглушку</li>
        </ul>
-       <p class="note">Те же операции доступны в Telegram: <code>/status</code> и <code>/admin</code>.</p>
+       <p class="note">В Telegram те же операции доступны кнопками бота и этой панелью.</p>
 
        <h4 class="sub-title">Горячие клавиши</h4>
        <table class="kv">
@@ -1072,15 +1072,17 @@ async function loadJobs() {
     markLoaded();
   } catch (e) {
     body.innerHTML = `<tr><td colspan="5" class="td-empty">${esc(e.message)}</td></tr>`;
+    $("jobsCards").innerHTML = `<div class="job-card job-card-empty">${esc(e.message)}</div>`;
   }
 }
 
 function renderJobsTable(rows) {
   const body = $("jobsBody");
+  const cards = $("jobsCards");
   if (!rows.length) {
-    body.innerHTML = `<tr><td colspan="5" class="td-empty">${
-      jobFilter ? "В этой категории задач нет" : "Задач пока нет"
-    }</td></tr>`;
+    const empty = jobFilter ? "В этой категории задач нет" : "Задач пока нет";
+    body.innerHTML = `<tr><td colspan="5" class="td-empty">${empty}</td></tr>`;
+    cards.innerHTML = `<div class="job-card job-card-empty">${empty}</div>`;
     return;
   }
   body.innerHTML = rows
@@ -1104,7 +1106,22 @@ function renderJobsTable(rows) {
     })
     .join("");
 
-  body.querySelectorAll("[data-watch]").forEach((b) =>
+  cards.innerHTML = rows
+    .map((j) => {
+      const p = pillFor(j.status);
+      const bg = j.background ? ` · фон ${j.background}` : "";
+      return `<button type="button" class="job-card" data-watch="${esc(j.job_id)}">
+        <span class="job-card-top">
+          <strong>${esc(j.title || "Без имени")}</strong>
+          <span class="pill ${p.cls}">${p.label}</span>
+        </span>
+        <span class="job-card-meta">${esc(mockupLabel(j.mockup))}${bg}</span>
+        <span class="job-card-meta">${esc(fmtTime(j.updated_at || j.created_at))}</span>
+      </button>`;
+    })
+    .join("");
+
+  document.querySelectorAll("#jobsBody [data-watch], #jobsCards [data-watch]").forEach((b) =>
     b.addEventListener("click", () => openJobModal(b.dataset.watch))
   );
 }
@@ -1184,13 +1201,15 @@ async function openJobModal(jobId) {
     ${fieldRows(data.fields)}
     <h4 class="sub-title">О задаче</h4>
     ${meta}
-    ${data.jpg_path ? `<div class="preview" id="jobPreview"><img id="jobPreviewImg" alt="Превью"></div>` : ""}
+    ${data.jpg_path ? `<div class="preview" id="jobPreview"><img id="jobPreviewImg" alt="Лицевая"></div>` : ""}
+    ${data.jpg_back_path ? `<div class="preview" id="jobPreviewBack"><img id="jobPreviewBackImg" alt="Оборот"></div>` : ""}
   `;
 
   const foot =
     status === "done"
       ? `<button type="button" class="btn secondary" id="jobDlPsd">Скачать PSD</button>
-         <button type="button" class="btn primary" id="jobDlJpg">Скачать JPG</button>`
+         ${data.jpg_back_path ? `<button type="button" class="btn primary" id="jobDlJpgBack">JPG оборот</button>` : ""}
+         <button type="button" class="btn primary" id="jobDlJpg">JPG лицевая</button>`
       : `<button type="button" class="btn secondary" id="jobWatch">Следить за выполнением</button>
          <button type="button" class="btn primary" data-close-modal>Закрыть</button>`;
 
@@ -1208,7 +1227,19 @@ async function openJobModal(jobId) {
   }
 
   $("jobDlJpg")?.addEventListener("click", () => downloadFile(data.jpg_path, "jpg", "preview.jpg"));
+  $("jobDlJpgBack")?.addEventListener("click", () => downloadFile(data.jpg_back_path, "jpg", "preview_back.jpg"));
   $("jobDlPsd")?.addEventListener("click", () => downloadFile(data.psd_path, "psb", "vu.psb"));
+  if (data.jpg_back_path) {
+    fetch(`/api/v1/render/download/jpg?path=${encodeURIComponent(data.jpg_back_path)}`, {
+      headers: headers(false),
+    })
+      .then((r) => (r.ok ? r.blob() : null))
+      .then((b) => {
+        if (b && $("jobPreviewBackImg")) $("jobPreviewBackImg").src = URL.createObjectURL(b);
+      })
+      .catch(() => {});
+  }
+
   $("jobWatch")?.addEventListener("click", () => {
     closeModal();
     startPolling(jobId);
@@ -1328,15 +1359,18 @@ function bindDownload(id, path, kind, filename) {
   };
 }
 
-async function showPreview(path) {
+async function showPreview(path, imgId = "renderPreviewImg", boxId = "renderPreview") {
   if (!path) return;
   try {
     const r = await fetch(`/api/v1/render/download/jpg?path=${encodeURIComponent(path)}`, {
       headers: headers(false),
     });
     if (!r.ok) return;
-    $("renderPreviewImg").src = URL.createObjectURL(await r.blob());
-    $("renderPreview").hidden = false;
+    const img = $(imgId);
+    const box = $(boxId);
+    if (!img || !box) return;
+    img.src = URL.createObjectURL(await r.blob());
+    box.hidden = false;
   } catch {}
 }
 
@@ -1350,10 +1384,15 @@ async function poll(jobId) {
       $("renderDownloads").hidden = false;
       $("homeJobActions").hidden = false;
       bindDownload("dlJpg", data.jpg_path, "jpg", "preview.jpg");
+      bindDownload("dlJpgBack", data.jpg_back_path, "jpg", "preview_back.jpg");
       bindDownload("dlPsd", data.psd_path, "psb", "vu.psb");
       bindDownload("homeDlJpg", data.jpg_path, "jpg", "preview.jpg");
+      bindDownload("homeDlJpgBack", data.jpg_back_path, "jpg", "preview_back.jpg");
       bindDownload("homeDlPsd", data.psd_path, "psb", "vu.psb");
+      if ($("dlJpgBack")) $("dlJpgBack").hidden = !data.jpg_back_path;
+      if ($("homeDlJpgBack")) $("homeDlJpgBack").hidden = !data.jpg_back_path;
       await showPreview(data.jpg_path);
+      await showPreview(data.jpg_back_path, "renderPreviewBackImg", "renderPreviewBack");
       toast("Отрисовка завершена", "ok");
       localStorage.removeItem(STORE.job);
     } else if (data.status === "failed") {
@@ -1374,6 +1413,7 @@ function startPolling(jobId) {
   $("renderStatus").hidden = false;
   $("renderDownloads").hidden = true;
   $("renderPreview").hidden = true;
+  if ($("renderPreviewBack")) $("renderPreviewBack").hidden = true;
   poll(jobId);
   pollTimer = setInterval(() => poll(jobId), 2000);
 }
@@ -1388,6 +1428,7 @@ $("renderForm").addEventListener("submit", async (e) => {
     let portraitPath = null;
     const file = $("portraitFile").files?.[0];
     if (file) {
+      toast("Прогоняю портрет через ИИ…", "ok");
       const form = new FormData();
       form.append("file", file);
       const h = {};

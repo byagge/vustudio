@@ -112,10 +112,14 @@ class RenderQueue:
                             "background": opts.get("background"),
                             "created_at": data.get("created_at", ""),
                             "updated_at": data.get("updated_at", ""),
-                            "title": fields.get("surname_ru") or fields.get("number") or "",
+                            "title": fields.get("surname_ru")
+                            or fields.get("number")
+                            or "",
                             "error": data.get("error"),
                             "jpg_path": data.get("jpg_path"),
+                            "jpg_back_path": data.get("jpg_back_path"),
                             "psd_path": data.get("psd_path"),
+                            "user_id": data.get("user_id"),
                         },
                     )
                 )

@@ -45,6 +45,7 @@ class SubstituteResult:
     status: str = ""
     psd_path: Path | None = None
     jpg_path: Path | None = None
+    jpg_back_path: Path | None = None
     job_json_path: Path | None = None
     fields: dict[str, Any] = field(default_factory=dict)
     layers_by_field: dict[str, str] = field(default_factory=dict)
@@ -52,7 +53,7 @@ class SubstituteResult:
 
     @property
     def output_paths(self) -> list[Path]:
-        return [p for p in (self.psd_path, self.jpg_path) if p]
+        return [p for p in (self.psd_path, self.jpg_path, self.jpg_back_path) if p]
 
 
 def _queue_dir() -> Path:
@@ -122,6 +123,7 @@ def prepare_substitute_job(
         task,
         output_psd=base.with_suffix(ext),
         output_jpg=base.with_suffix(".jpg"),
+        output_jpg_back=Path(str(base) + "_back.jpg"),
     )
     job_path.write_text(json.dumps(job, ensure_ascii=False, indent=2), encoding="utf-8")
     return job, job_path
@@ -195,6 +197,7 @@ def substitute_text(
             layers_by_name=payload.get("layers_by_name", {}),
             psd_path=Path(job["output_psd"]),
             jpg_path=Path(job["output_jpg"]),
+            jpg_back_path=Path(job["output_jpg_back"]) if job.get("output_jpg_back") else None,
         )
 
     if is_server_mode():
@@ -225,11 +228,16 @@ def substitute_text(
     if jobs:
         job_path = jobs[0]
 
+    jpg = None
+    jpg_back = None
     for p in render_result.output_paths:
         if p.suffix.lower() in {".psd", ".psb"}:
             psd = p
         elif p.suffix.lower() in {".jpg", ".jpeg"}:
-            jpg = p
+            if p.stem.endswith("_back"):
+                jpg_back = p
+            else:
+                jpg = p
 
     return SubstituteResult(
         ok=True,
@@ -237,6 +245,7 @@ def substitute_text(
         job_id=task.job_id,
         psd_path=psd,
         jpg_path=jpg,
+        jpg_back_path=jpg_back,
         job_json_path=job_path,
         fields=block_to_dict(block),
         layers_by_field=payload.get("layers_by_field", {}),
@@ -310,6 +319,7 @@ def wait_substitute(job_id: str, timeout: float = 900, poll: float = 2.0) -> Sub
         status=task.status,
         psd_path=Path(task.psd_path) if task.psd_path else None,
         jpg_path=Path(task.jpg_path) if task.jpg_path else None,
+        jpg_back_path=Path(task.jpg_back_path) if getattr(task, "jpg_back_path", None) else None,
         fields=task.fields,
     )
 
@@ -327,6 +337,7 @@ def get_substitute_status(job_id: str) -> SubstituteResult | None:
         status=task.status,
         psd_path=Path(task.psd_path) if task.psd_path else None,
         jpg_path=Path(task.jpg_path) if task.jpg_path else None,
+        jpg_back_path=Path(task.jpg_back_path) if getattr(task, "jpg_back_path", None) else None,
         fields=task.fields,
     )
 

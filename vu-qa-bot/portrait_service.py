@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-ИИ-портрет для smart object Photo (task3.md).
+ИИ-портрет для smart object Photo.
 
 Приоритет resolve_portrait():
   1. portrait_path (файл существует)
-  2. generate_portrait → POST PORTRAIT_API_URL (JSON fields → JPEG)
+     — user_*/gen_*/prep_* уже прогнаны через ИИ при загрузке/генерации
+     — прочие файлы прогоняются через ИИ-edit (вырезанный фон)
+  2. generate_portrait → генерация с нуля
   3. null — placeholder в PSB
 """
 from __future__ import annotations
@@ -53,7 +55,7 @@ def _cache_path(fields: dict[str, Any]) -> Path:
     return portraits_dir() / f"cache_{portrait_cache_key(fields)}.jpg"
 
 
-def save_upload(data: bytes, user_id: int, suffix: str = ".jpg") -> Path:
+def save_upload(data: bytes, user_id: int | str, suffix: str = ".jpg") -> Path:
     """task3 §5.1: output/portraits/user_{user_id}.jpg"""
     validate_image_bytes(data)
     cfg = PortraitSettings.from_env()
@@ -62,15 +64,32 @@ def save_upload(data: bytes, user_id: int, suffix: str = ".jpg") -> Path:
     return prepare_portrait_file(path, path, settings=cfg)
 
 
-def prepare_upload(data: bytes, user_id: int, *, suffix: str = ".jpg") -> PortraitResult:
+def prepare_upload(data: bytes, user_id: int | str, *, suffix: str = ".jpg", fields: dict[str, Any] | None = None) -> PortraitResult:
+    """Сохранить исходник и прогнать через ИИ (документный портрет, фон вырезан)."""
     try:
-        path = save_upload(data, user_id, suffix=suffix)
+        validate_image_bytes(data)
     except ValueError as e:
         return PortraitResult(ok=False, message=str(e))
+    try:
+        src = portraits_dir() / f"user_{user_id}_src{suffix if suffix.startswith('.') else '.jpg'}"
+        src.write_bytes(data)
+        dest = portraits_dir() / f"user_{user_id}.jpg"
+        enhanced = transform_uploaded_portrait(src, dest, fields=fields)
+        if enhanced.ok:
+            return enhanced
+        log.warning("portrait AI edit failed, crop only: %s", enhanced.message)
+        path = prepare_portrait_file(src, dest, face_focus=True)
+        msg = enhanced.message or "ИИ недоступен"
+        return PortraitResult(
+            ok=True,
+            path=path,
+            source="upload",
+            provider=enhanced.provider,
+            message=f"Фото сохранено без ИИ ({msg})",
+        )
     except Exception as e:
         log.exception("Upload portrait failed")
         return PortraitResult(ok=False, message=str(e))
-    return PortraitResult(ok=True, path=path, source="upload", message="Фото сохранено")
 
 
 def _http_api_generate(fields: dict[str, Any], out: Path, cfg: PortraitSettings) -> bool:
@@ -101,9 +120,15 @@ def _http_api_generate(fields: dict[str, Any], out: Path, cfg: PortraitSettings)
         return False
 
 
-def finalize_portrait(raw: Path, *, dest: Path, settings: PortraitSettings | None = None) -> Path:
+def finalize_portrait(
+    raw: Path,
+    *,
+    dest: Path,
+    settings: PortraitSettings | None = None,
+    face_focus: bool = False,
+) -> Path:
     cfg = settings or PortraitSettings.from_env()
-    return prepare_portrait_file(raw, dest, settings=cfg)
+    return prepare_portrait_file(raw, dest, settings=cfg, face_focus=face_focus)
 
 
 def generate_ai_portrait(
@@ -141,7 +166,7 @@ def generate_ai_portrait(
         )
 
     try:
-        finalize_portrait(gen.raw_path, dest=out, settings=cfg)
+        finalize_portrait(gen.raw_path, dest=out, settings=cfg, face_focus=False)
     except Exception as e:
         log.exception("Portrait finalize failed")
         return PortraitResult(ok=False, message=str(e), provider=gen.provider)
@@ -158,6 +183,49 @@ def generate_ai_portrait(
     )
 
 
+def transform_uploaded_portrait(
+    source: Path,
+    dest: Path,
+    *,
+    fields: dict[str, Any] | None = None,
+    settings: PortraitSettings | None = None,
+    job_id: str | None = None,
+) -> PortraitResult:
+    """Загруженное фото → ИИ-edit (cut-out) → 3×4 JPEG под бланк."""
+    cfg = settings or PortraitSettings.from_env()
+    fields = fields or {}
+    jid = job_id or dest.stem
+    raw = portraits_dir() / f"edit_{jid}_raw.png"
+    log.info("portrait AI-edit src=%s dest=%s provider=%s", source, dest, cfg.resolved_provider())
+    gen = generate_raw_portrait(fields, raw, settings=cfg, source_image=source)
+    if not gen.ok or not gen.raw_path or not gen.raw_path.is_file():
+        return PortraitResult(
+            ok=False,
+            message=gen.message or "ИИ-обработка фото не удалась",
+            provider=gen.provider,
+        )
+    try:
+        finalize_portrait(gen.raw_path, dest=dest, settings=cfg, face_focus=False)
+    except Exception as e:
+        log.exception("Portrait AI-edit finalize failed")
+        return PortraitResult(ok=False, message=str(e), provider=gen.provider)
+    return PortraitResult(
+        ok=True,
+        path=dest,
+        source=f"ai_edit_{gen.provider}",
+        provider=gen.provider,
+        message="ИИ-портрет с вырезанным фоном",
+    )
+
+
+def _already_enhanced(path: Path) -> bool:
+    stem = path.stem.lower()
+    name = path.name.lower()
+    if stem.endswith("_src") or stem.endswith("_raw"):
+        return False
+    return name.startswith(("gen_", "user_", "prep_"))
+
+
 def resolve_portrait(task: RenderTask) -> str | None:
     opts = task.options
     cfg = PortraitSettings.from_env()
@@ -171,12 +239,23 @@ def resolve_portrait(task: RenderTask) -> str | None:
 
     if opts.portrait_path and Path(opts.portrait_path).is_file():
         src = Path(opts.portrait_path)
-        if src.parent.resolve() == portraits_dir().resolve() and src.name.startswith("user_"):
-            log.info("portrait use upload %s", src)
+        if _already_enhanced(src):
+            log.info("portrait use enhanced %s", src)
             return str(src.resolve())
         out = portraits_dir() / f"prep_{task.job_id}.jpg"
+        enhanced = transform_uploaded_portrait(
+            src,
+            out,
+            fields=task.fields,
+            settings=cfg,
+            job_id=task.job_id,
+        )
+        if enhanced.ok and enhanced.path:
+            log.info("portrait AI-edit job=%s -> %s", task.job_id, enhanced.path)
+            return str(enhanced.path.resolve())
+        log.warning("portrait AI-edit skipped: %s", enhanced.message)
         try:
-            prepared = str(finalize_portrait(src, dest=out, settings=cfg).resolve())
+            prepared = str(finalize_portrait(src, dest=out, settings=cfg, face_focus=True).resolve())
             log.info("portrait prepared %s", prepared)
             return prepared
         except Exception:
@@ -214,6 +293,8 @@ def portrait_status_label(opts) -> str:
         name = Path(str(path)).name
         if name.startswith("gen_"):
             return "🧑 ИИ готов"
+        if name.startswith("user_"):
+            return "📷 своё фото → ИИ"
         return "📷 своё фото"
     if getattr(opts, "generate_portrait", False):
         return "🧑 ИИ (при отрисовке)"

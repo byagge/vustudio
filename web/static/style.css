@@ -929,6 +929,42 @@ select {
 .table tr:hover td { background: rgba(255, 255, 255, 0.02); }
 .table .td-empty { text-align: center; color: var(--text-4); padding: 30px 0; }
 
+.jobs-cards { display: none; flex-direction: column; gap: 8px; }
+.job-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  min-height: 72px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface-2);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.job-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.job-card-top strong {
+  font-size: 15px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.job-card-meta { font-size: 13px; color: var(--text-3); }
+.job-card-empty {
+  align-items: center;
+  justify-content: center;
+  color: var(--text-4);
+  cursor: default;
+}
+
 .inline-result {
   margin-top: 14px;
   padding: 12px 14px;
@@ -1487,12 +1523,28 @@ select {
 }
 
 @media (max-width: 760px) {
+  html, body {
+    overflow: hidden;
+    height: 100%;
+    height: 100dvh;
+  }
+  .layout {
+    min-height: 0;
+    height: 100%;
+    overflow: hidden;
+  }
   .sidebar { display: none; }
   .main {
     margin-left: 0;
     padding: 16px 16px calc(88px + env(safe-area-inset-bottom, 0px));
     max-width: none;
+    height: 100%;
+    overflow-x: hidden;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
   }
+  .page { min-width: 0; max-width: 100%; }
   .page-head {
     position: sticky;
     top: 0;
@@ -1508,12 +1560,63 @@ select {
   .gs-art { display: none; }
   .head-right .segmented { display: none; }
   .bottom-nav { display: flex; }
+  .jobs-table-wrap { display: none; }
+  .jobs-cards { display: flex; }
+  .chips { overflow: visible; }
+  input, textarea, select { font-size: 16px; }
+  .overlay {
+    padding-top: 0;
+    align-items: stretch;
+  }
+  .modal {
+    width: 100%;
+    max-width: none;
+    height: 100%;
+    max-height: none;
+    border-radius: 0;
+    border: none;
+  }
+  .kv { display: block; }
+  .kv tr, .kv th, .kv td {
+    display: block;
+    width: 100%;
+    padding: 6px 0;
+  }
+  .table { min-width: 0; }
 }
 
+html.app-shell, html.app-shell body {
+  overflow: hidden;
+  height: 100%;
+  height: 100dvh;
+}
+html.app-shell .layout {
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
 html.app-shell .sidebar { display: none; }
 html.app-shell .main {
   margin-left: 0;
   padding: 16px 16px calc(88px + env(safe-area-inset-bottom, 0px));
   max-width: none;
+  height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
 }
 html.app-shell .bottom-nav { display: flex; }
+html.app-shell .jobs-table-wrap { display: none; }
+html.app-shell .jobs-cards { display: flex; }
+html.app-shell .page-head h1 { font-size: 22px; }
+html.app-shell input, html.app-shell textarea, html.app-shell select { font-size: 16px; }
+html.app-shell .overlay { padding-top: 0; align-items: stretch; }
+html.app-shell .modal {
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  max-height: none;
+  border-radius: 0;
+  border: none;
+}

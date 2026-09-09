@@ -102,7 +102,13 @@ def build_render_payload(
     }
 
 
-def build_photoshop_job(task: RenderTask, *, output_psd: Path, output_jpg: Path) -> dict[str, Any]:
+def build_photoshop_job(
+    task: RenderTask,
+    *,
+    output_psd: Path,
+    output_jpg: Path,
+    output_jpg_back: Path | None = None,
+) -> dict[str, Any]:
     block = parse_client_block(task.text_block)
     errors = validate_block(block)
     if errors:
@@ -145,6 +151,7 @@ def build_photoshop_job(task: RenderTask, *, output_psd: Path, output_jpg: Path)
         "template": str(template_path.resolve()),
         "output_psd": str(output_psd.resolve()),
         "output_jpg": str(output_jpg.resolve()),
+        "output_jpg_back": str(output_jpg_back.resolve()) if output_jpg_back else "",
         "output_is_psb": template_path.suffix.lower() == ".psb",
         "fields": block_to_dict(block),
         **payload,

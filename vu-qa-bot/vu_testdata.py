@@ -89,6 +89,9 @@ BASE_SETS = [
     (["A1", "B"], 3), (["B", "C1"], 3),
 ]
 
+# Категории, которые реально есть на мокапе (бейджи a/b/b1/m + таблица оборота B/B1/M).
+MOCKUP_CATEGORIES = ("B", "B1", "M")
+
 RESTRICTION_CODES = ["AT", "AS", "MS", "ГБО"]
 
 
@@ -291,6 +294,48 @@ def parse_identity(text: str, today: date | None = None) -> Identity:
 
 DEMO_IDENTITY_STR = "ТЕСТОВ ТЕСТ ТЕСТОВИЧ 01.01.1990"
 
+_RANDOM_MALE = (
+    ("ИВАНОВ", "ИВАН", "ИВАНОВИЧ"),
+    ("ПЕТРОВ", "ПЁТР", "СЕРГЕЕВИЧ"),
+    ("СИДОРОВ", "АЛЕКСЕЙ", "НИКОЛАЕВИЧ"),
+    ("СМИРНОВ", "ДМИТРИЙ", "АЛЕКСАНДРОВИЧ"),
+    ("КУЗНЕЦОВ", "АНДРЕЙ", "ВИКТОРОВИЧ"),
+    ("ПОПОВ", "СЕРГЕЙ", "ВЛАДИМИРОВИЧ"),
+    ("СОКОЛОВ", "МИХАИЛ", "ПАВЛОВИЧ"),
+    ("ЛЕБЕДЕВ", "АРТЁМ", "ОЛЕГОВИЧ"),
+)
+_RANDOM_FEMALE = (
+    ("ИВАНОВА", "АННА", "ПЕТРОВНА"),
+    ("ПЕТРОВА", "ЕЛЕНА", "СЕРГЕЕВНА"),
+    ("СИДОРОВА", "МАРИЯ", "АЛЕКСЕЕВНА"),
+    ("СМИРНОВА", "ОЛЬГА", "ДМИТРИЕВНА"),
+    ("КУЗНЕЦОВА", "НАТАЛЬЯ", "АНДРЕЕВНА"),
+    ("ПОПОВА", "ЕКАТЕРИНА", "ВИКТОРОВНА"),
+    ("СОКОЛОВА", "ТАТЬЯНА", "НИКОЛАЕВНА"),
+    ("ЛЕБЕДЕВА", "ЮЛИЯ", "ВЛАДИМИРОВНА"),
+)
+
+
+def random_identity(rng: random.Random, *, today: date | None = None) -> Identity:
+    """Случайные синтетические ФИО для кнопки «Сгенерировать»."""
+    today = today or date.today()
+    female = rng.random() < 0.5
+    surname, name, patronymic = rng.choice(_RANDOM_FEMALE if female else _RANDOM_MALE)
+    age = rng.randint(21, 58)
+    try:
+        birth = today.replace(year=today.year - age, day=min(today.day, 28))
+    except ValueError:
+        birth = date(today.year - age, 6, 15)
+    birth -= timedelta(days=rng.randint(0, 300))
+    return Identity(
+        surname,
+        name,
+        patronymic,
+        fmt_date(birth),
+        "F" if female else "M",
+        source="random",
+    )
+
 # Место рождения (п. 3) задаётся пользователем: населённый пункт печатается на бланке
 # в свободной форме, поэтому справочник — только быстрый выбор, а не ограничение.
 PLACE_RE = re.compile(r"^[А-ЯЁ0-9 .()\-]{2,60}$")
@@ -381,14 +426,16 @@ def make_valid(rng: random.Random, identity: Identity,
                region_code: str | None = None,
                birth_place: str | None = None,
                valid_now: bool = False,
-               today: date | None = None) -> LicenceRecord:
+               today: date | None = None,
+               allowed_categories: Iterable[str] | None = None) -> LicenceRecord:
     """
     Валидная запись. Личные данные обязательны (§2): случайных ФИО больше нет.
     region_code — код подразделения ГИБДД; None → случайный из справочника.
     birth_place — место рождения (п. 3); None → случайное из справочника.
-    valid_now   — выдача в пределах последних 10 лет, т.е. срок действия ещё НЕ истёк.
-                  По умолчанию False: выдача равномерна на всём допустимом интервале,
-                  поэтому большинство записей оказывается просроченными.
+    valid_now — выдача в пределах последних 10 лет (срок ещё не истёк).
+                По умолчанию False: выдача на всём допустимом интервале.
+    allowed_categories — если задан, генератор не выходит за этот набор
+                  (для мокапа: B, B1, M). CLI-датасет и /dataset без ограничения.
     """
     today = today or date.today()
     if identity is None:
@@ -412,9 +459,21 @@ def make_valid(rng: random.Random, identity: Identity,
     age_at_issue = age_on(birth, issue)
 
     # 4.5 — категории
-    base = rng.choices([b for b, _ in BASE_SETS], weights=[w for _, w in BASE_SETS])[0]
+    allowed = {c.upper() for c in allowed_categories} if allowed_categories else None
+    pairs = BASE_SETS
+    if allowed:
+        pairs = [(b, w) for b, w in BASE_SETS if set(closure(b)) <= allowed]
+        if not pairs:
+            pairs = [(list(allowed), 1)]
+    base = rng.choices([b for b, _ in pairs], weights=[w for _, w in pairs])[0]
     cats = prune_by_age(closure(base), age_at_issue)
-    cats.add("M")                                   # гарантируем M
+    if allowed:
+        cats &= allowed
+    else:
+        cats.add("M")  # в полном алфавите всегда есть M
+    if allowed and "M" in allowed:
+        cats.add("M")
+        cats &= allowed
     categories = sort_categories(cats)
 
     # 4.6 — подразделение и регион проживания

@@ -56,6 +56,21 @@ def build_portrait_prompt(fields: dict[str, Any]) -> str:
     )
 
 
+def build_portrait_edit_prompt(fields: dict[str, Any] | None = None) -> str:
+    """Промпт img2img: тот же человек, фон вырезан, вид официального фото на документ."""
+    fields = fields or {}
+    age = estimate_age(fields.get("birth_date") or "")
+    gender = gender_label(estimate_gender(fields))
+    who = f"this {age}-year-old {gender}" if fields.get("birth_date") or fields.get("given_ru") else "this person"
+    return (
+        f"Edit this photo into a professional passport-style ID photograph of {who}. "
+        "Keep the same identity: same face, age, gender, hair, skin tone and distinctive features. "
+        "Front-facing head-and-shoulders, neutral expression, mouth closed, eyes open, looking at camera. "
+        "Remove the original background completely (cut-out), no scenery, no objects, no text. "
+        "Even soft studio lighting, official government ID photo quality, photorealistic, 35mm lens look."
+    )
+
+
 def portrait_cache_key(fields: dict[str, Any]) -> str:
     import hashlib
     import json

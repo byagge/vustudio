@@ -12,14 +12,21 @@ from PIL import Image
 from portrait_ai import (
     FallbackGenerator,
     OpenAIGenerator,
+    _image_bytes_for_edit,
     is_gpt_image_model,
     openai_image_body,
     resolve_openai_image_model,
 )
 from portrait_config import PortraitSettings
 from portrait_preprocess import prepare_portrait_file, validate_image_bytes
-from portrait_prompt import build_portrait_prompt, estimate_age, estimate_gender
-from portrait_service import generate_ai_portrait, prepare_upload, resolve_portrait, save_upload
+from portrait_prompt import build_portrait_edit_prompt, build_portrait_prompt, estimate_age, estimate_gender
+from portrait_service import (
+    _already_enhanced,
+    generate_ai_portrait,
+    prepare_upload,
+    resolve_portrait,
+    save_upload,
+)
 from render_models import RenderOptions, RenderTask
 from test_text_parser import SAMPLE
 from text_parser import parse_client_block
@@ -35,6 +42,11 @@ class TestPortraitPrompt(unittest.TestCase):
         p = build_portrait_prompt(fields)
         self.assertNotIn("ИВАНОВ", p)
         self.assertIn("man", p.lower())
+
+    def test_edit_prompt_cutout(self):
+        p = build_portrait_edit_prompt({"birth_date": "08.09.1983", "given_ru": "ИВАН ИВАНОВИЧ"})
+        self.assertIn("cut-out", p.lower())
+        self.assertNotIn("ИВАН", p)
 
     def test_gender_female(self):
         fields = {"given_ru": "МАРИЯ ПЕТРОВНА", "surname_ru": "СИДОРОВА"}
@@ -81,6 +93,49 @@ class TestPortraitPreprocess(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_image_bytes(b"x" * 10)
 
+    def test_flatten_cutout_on_gray(self):
+        from portrait_preprocess import _flatten_cutout
+
+        im = Image.new("RGBA", (20, 20), (0, 0, 0, 0))
+        im.putpixel((10, 10), (40, 50, 60, 255))
+        flat = _flatten_cutout(im)
+        self.assertEqual(flat.mode, "RGB")
+        self.assertEqual(flat.getpixel((0, 0)), (228, 228, 228))
+
+    def test_ai_frame_keeps_full_height(self):
+        """ИИ-ID фото не режем сверху на 72% — cover всего кадра."""
+        im = Image.new("RGB", (390, 800), (10, 20, 30))
+        # y=600–650 попадает в cover всего кадра и не попадает в selfie-кроп 72%
+        for y in range(600, 650):
+            for x in range(390):
+                im.putpixel((x, y), (200, 10, 10))
+        cfg = PortraitSettings(
+            openai_api_key=None,
+            openai_model="gpt-image-1",
+            openai_size="1024x1024",
+            api_url=None,
+            api_key=None,
+            width=390,
+            height=507,
+            jpeg_quality=90,
+            provider="fallback",
+            fallback_enabled=True,
+            cache_enabled=False,
+            timeout_sec=30,
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "id.jpg"
+            dst_ai = Path(tmp) / "ai.jpg"
+            dst_selfie = Path(tmp) / "selfie.jpg"
+            im.save(src, format="JPEG")
+            prepare_portrait_file(src, dst_ai, settings=cfg, face_focus=False)
+            prepare_portrait_file(src, dst_selfie, settings=cfg, face_focus=True)
+            with Image.open(dst_ai) as a, Image.open(dst_selfie) as s:
+                self.assertEqual(a.size, (390, 507))
+                self.assertEqual(s.size, (390, 507))
+                # полный кадр дотягивает красный низ; selfie-кроп его почти отрезает
+                self.assertGreater(a.getpixel((195, 500))[0], s.getpixel((195, 500))[0])
+
 
 class TestPortraitService(unittest.TestCase):
     def test_fallback_generate(self):
@@ -106,7 +161,11 @@ class TestPortraitService(unittest.TestCase):
         self.assertTrue(path.parent.name == "portraits")
 
     def test_resolve_upload_priority(self):
+        os.environ["PORTRAIT_PROVIDER"] = "fallback"
+        os.environ["PORTRAIT_FALLBACK"] = "1"
+        os.environ["PORTRAIT_CACHE"] = "0"
         with tempfile.TemporaryDirectory() as tmp:
+            os.environ["RENDER_OUTPUT_DIR"] = tmp
             src = Path(tmp) / "p.jpg"
             Image.new("RGB", (400, 500), (150, 140, 130)).save(src, format="JPEG")
             task = RenderTask.create(
@@ -120,6 +179,14 @@ class TestPortraitService(unittest.TestCase):
             path = resolve_portrait(task)
             self.assertIsNotNone(path)
             self.assertTrue(Path(path).is_file())
+
+    def test_src_upload_not_treated_as_enhanced(self):
+        self.assertFalse(_already_enhanced(Path("user_1_src.png")))
+        self.assertFalse(_already_enhanced(Path("user_1_src.jpg")))
+        self.assertFalse(_already_enhanced(Path("edit_job_raw.png")))
+        self.assertTrue(_already_enhanced(Path("user_1.jpg")))
+        self.assertTrue(_already_enhanced(Path("gen_ab12.jpg")))
+        self.assertTrue(_already_enhanced(Path("prep_ab12.jpg")))
 
 
 class TestPortraitForceSkipsCache(unittest.TestCase):
@@ -248,6 +315,68 @@ class TestOpenAIGeneratorMock(unittest.TestCase):
                 r = gen.generate({"birth_date": "01.01.1990", "given_ru": "A B"}, out)
             self.assertTrue(r.ok)
             self.assertTrue(out.is_file())
+
+    def test_openai_edit_posts_multipart(self):
+        import base64
+        import json
+
+        tiny = base64.b64encode(b"fake-edit").decode()
+        payload = json.dumps({"data": [{"b64_json": tiny}]}).encode()
+        captured: dict = {}
+
+        class FakeResp:
+            def read(self):
+                return payload
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                pass
+
+        def fake_urlopen(req, timeout=0):
+            captured["url"] = req.full_url
+            captured["ctype"] = req.headers.get("Content-type") or req.headers.get("Content-Type")
+            captured["body"] = req.data
+            return FakeResp()
+
+        cfg = PortraitSettings(
+            openai_api_key="sk-test",
+            openai_model="gpt-image-1",
+            openai_size="1024x1024",
+            api_url=None,
+            api_key=None,
+            width=390,
+            height=507,
+            jpeg_quality=90,
+            provider="openai",
+            fallback_enabled=False,
+            cache_enabled=False,
+            timeout_sec=30,
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "face.jpg"
+            Image.new("RGB", (80, 100), (90, 80, 70)).save(src, format="JPEG")
+            out = Path(tmp) / "edited.png"
+            with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+                gen = OpenAIGenerator(cfg)
+                r = gen.edit(src, {"birth_date": "01.01.1990"}, out)
+            self.assertTrue(r.ok, r.message)
+            self.assertIn("/v1/images/edits", captured["url"])
+            self.assertIn("multipart/form-data", captured["ctype"])
+            self.assertIn(b"background", captured["body"])
+            self.assertIn(b"photo.png", captured["body"])
+
+    def test_edit_source_is_png_and_resized(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "huge.jpg"
+            Image.new("RGB", (4000, 3000), (40, 50, 60)).save(src, format="JPEG")
+            data, name, ctype = _image_bytes_for_edit(src)
+            self.assertEqual(name, "photo.png")
+            self.assertEqual(ctype, "image/png")
+            with Image.open(io.BytesIO(data)) as im:
+                self.assertEqual(im.format, "PNG")
+                self.assertLessEqual(max(im.size), 1536)
 
 
 if __name__ == "__main__":

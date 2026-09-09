@@ -77,9 +77,44 @@ class ProfileStore:
         data[key]["region"] = None if region in (None, "any") else region
         self._save(data)
 
+    def touch(self, user_id: int, *, username: str | None = None, first_name: str | None = None) -> None:
+        data = self._load()
+        key = str(user_id)
+        row = data.get(key, {})
+        now = datetime.now().isoformat(timespec="seconds")
+        row.setdefault("first_seen", now)
+        row["last_seen"] = now
+        row["tg_id"] = user_id
+        if username is not None:
+            row["username"] = username
+        if first_name is not None:
+            row["first_name"] = first_name
+        data[key] = row
+        self._save(data)
+
+    def bump(self, user_id: int, field: str, n: int = 1) -> None:
+        data = self._load()
+        key = str(user_id)
+        row = data.get(key, {})
+        row[field] = int(row.get(field) or 0) + n
+        data[key] = row
+        self._save(data)
+
+    def stats(self, user_id: int) -> dict:
+        p = self._row(user_id)
+        return {
+            "tg_id": int(p.get("tg_id") or user_id),
+            "username": str(p.get("username") or ""),
+            "first_name": str(p.get("first_name") or ""),
+            "generations": int(p.get("generations") or 0),
+            "renders": int(p.get("renders") or 0),
+            "first_seen": str(p.get("first_seen") or ""),
+            "last_seen": str(p.get("last_seen") or ""),
+        }
+
     def load(self, user_id: int) -> UserProfile | None:
         p = self._load().get(str(user_id))
-        if not p:
+        if not p or not p.get("surname"):
             return None
         ident = Identity(
             p["surname"],

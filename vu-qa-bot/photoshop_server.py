@@ -234,11 +234,18 @@ def resolve_output_file(path: str | Path) -> Path:
     return file_path
 
 
-def get_server_status() -> RenderServerStatus:
+def get_server_status(*, probe_com: bool = False) -> RenderServerStatus:
     hb = read_heartbeat()
     alive = hb.is_alive() if hb else False
     configured, _ = check_photoshop_exe()
-    ps_ok = hb.photoshop_available if hb and alive else (photoshop_available() if configured else False)
+    # COM Dispatch поднимает Photoshop и вешает поток. Бот/API этого не делают:
+    # статус PS берём из heartbeat воркера.
+    if hb and alive:
+        ps_ok = hb.photoshop_available
+    elif probe_com and configured:
+        ps_ok = photoshop_available()
+    else:
+        ps_ok = False
     stats = queue_stats()
 
     if is_server_mode():

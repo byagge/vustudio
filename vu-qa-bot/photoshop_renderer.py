@@ -208,9 +208,15 @@ class PhotoshopRenderer:
         ext = mockup_path.suffix.lower() or ".psd"
         psd_out = base.with_suffix(ext)
         jpg_out = base.with_suffix(".jpg")
+        jpg_back_out = Path(str(base) + "_back.jpg")
 
         try:
-            job_data = build_photoshop_job(task, output_psd=psd_out, output_jpg=jpg_out)
+            job_data = build_photoshop_job(
+                task,
+                output_psd=psd_out,
+                output_jpg=jpg_out,
+                output_jpg_back=jpg_back_out,
+            )
         except (ValueError, FileNotFoundError, OSError) as e:
             return RenderResult(
                 job=RenderJob(record=None, text_block=task.text_block),
@@ -253,9 +259,18 @@ class PhotoshopRenderer:
 
         task.psd_path = str(psd_out)
         task.jpg_path = str(jpg_out)
+        if jpg_back_out.is_file() and jpg_back_out.stat().st_size > 0:
+            task.jpg_back_path = str(jpg_back_out)
+        else:
+            jsx_log = _read_jsx_log(job_file)
+            if "no Back layer" not in jsx_log:
+                _wait_outputs(jpg_back_out, timeout=6)
+                if jpg_back_out.is_file() and jpg_back_out.stat().st_size > 0:
+                    task.jpg_back_path = str(jpg_back_out)
+        outputs = [p for p in (psd_out, jpg_out, jpg_back_out) if p.is_file() and p.stat().st_size > 0]
         return RenderResult(
             job=RenderJob(record=None, text_block=task.text_block),
-            output_paths=[psd_out, jpg_out],
+            output_paths=outputs,
             status="ok",
             message="Готово",
         )
