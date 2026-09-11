@@ -1,5 +1,5 @@
 #target photoshop
-var OTRIS_JSX_VERSION = "2026-09-08.1";
+var OTRIS_JSX_VERSION = "2026-09-11.2";
 
 (function () {
     if (typeof app === "undefined" || !app.documents) {
@@ -660,20 +660,93 @@ var OTRIS_JSX_VERSION = "2026-09-08.1";
         return hidden;
     }
 
-    function updateTextGroupByIndex(doc, values, visibility) {
+    function updateTextGroupByIndex(doc, values, visibility, job) {
         if (!values || !values.length) {
             return;
         }
         var groups = [];
         findGroupsNamed(doc, "Text", groups);
         for (var g = 0; g < groups.length; g++) {
+            if (groupHasDirectSmartObject(groups[g]) && !groupHasDirectTextLayers(groups[g])) {
+                continue;
+            }
             var textLayers = [];
             collectTextLayers(groups[g], textLayers, true);
+            if (textLayers.length < values.length) {
+                textLayers = [];
+                collectTextLayers(groups[g], textLayers, false);
+            }
+            writeLog(
+                null,
+                "text-group slots=" + textLayers.length + " values=" + values.length +
+                    " in '" + docName(doc) + "'"
+            );
             for (var i = 0; i < textLayers.length; i++) {
                 var val = i < values.length ? values[i] : "";
                 var vis = !visibility || i >= visibility.length ? true : visibility[i];
                 setTextSafe(textLayers[i], val, vis);
             }
+        }
+        if (job && job._keepTextVisible) {
+            fillDateLikeLayers(doc, values, visibility);
+        }
+    }
+
+    function layerTextContents(layer) {
+        try {
+            return String(layer.textItem.contents || "");
+        } catch (e) {
+            return "";
+        }
+    }
+
+    function isDateLikeLayer(layer) {
+        var t = layerTextContents(layer).replace(/^\s+|\s+$/g, "");
+        var n = "";
+        try {
+            n = String(layer.name || "");
+        } catch (eN) {}
+        if (/^\d{2}[.\-]\d{2}[.\-]\d{4}$/.test(t) || /^\d{2}[.\-]\d{2}[.\-]\d{4}$/.test(n)) {
+            return true;
+        }
+        if (/^(10|11|12|open|expiry|открыто|до)$/i.test(n.replace(/^\s+|\s+$/g, ""))) {
+            return true;
+        }
+        return false;
+    }
+
+    function fillDateLikeLayers(doc, values, visibility) {
+        if (!values || !values.length) {
+            return;
+        }
+        var layers = [];
+        collectTextLayers(doc, layers, false);
+        var dates = [];
+        var i;
+        for (i = 0; i < values.length; i++) {
+            if (/^\d{2}\.\d{2}\.\d{4}$/.test(String(values[i] || ""))) {
+                dates.push({ value: values[i], vis: !visibility || visibility[i] !== false });
+            }
+        }
+        if (!dates.length) {
+            return;
+        }
+        var di = 0;
+        var filled = 0;
+        for (i = 0; i < layers.length; i++) {
+            if (di >= dates.length) {
+                break;
+            }
+            if (!isDateLikeLayer(layers[i])) {
+                continue;
+            }
+            if (setTextSafe(layers[i], dates[di].value, dates[di].vis)) {
+                filled++;
+                di++;
+            }
+        }
+        if (filled) {
+            writeLog(null, "date-like layers filled=" + filled + " in '" + docName(doc) + "'");
         }
     }
 
@@ -1040,6 +1113,31 @@ var OTRIS_JSX_VERSION = "2026-09-08.1";
                         setLayerVisible(layer, visible);
                         n++;
                     } catch (e2) {}
+                }
+            });
+        }
+        return n;
+    }
+
+    function countNamedLayers(doc, name) {
+        var n = 0;
+        if (!name) {
+            return 0;
+        }
+        forEachLayerByName(doc, name, function () {
+            n++;
+        });
+        if (n === 0) {
+            var key = layerNameKey(name);
+            forEachLayerDeep(doc, function (layer) {
+                var ln = "";
+                try {
+                    ln = String(layer.name);
+                } catch (eN) {
+                    return;
+                }
+                if (layerNameKey(ln) === key) {
+                    n++;
                 }
             });
         }
@@ -1835,7 +1933,7 @@ var OTRIS_JSX_VERSION = "2026-09-08.1";
             writeLog(null, "applyCategoryVisibility: " + eCat);
         }
         try {
-            updateTextGroupByIndex(doc, textVals || [], textVis || null);
+            updateTextGroupByIndex(doc, textVals || [], textVis || null, job);
         } catch (eGrp) {
             writeLog(null, "updateTextGroupByIndex: " + eGrp);
         }
@@ -2038,35 +2136,117 @@ var OTRIS_JSX_VERSION = "2026-09-08.1";
         return out;
     }
 
+    function showBackTextGroups(doc) {
+        var groups = [];
+        findGroupsNamed(doc, "Text", groups);
+        var n = 0;
+        var i;
+        for (i = 0; i < groups.length; i++) {
+            var g = groups[i];
+            if (groupHasDirectSmartObject(g) && !groupHasDirectTextLayers(g)) {
+                continue;
+            }
+            if (!groupHasDirectTextLayers(g)) {
+                continue;
+            }
+            try {
+                g.visible = true;
+                n++;
+            } catch (eVis) {}
+        }
+        forEachLayerByName(doc, "Text", function (layer) {
+            if (layer.typename === "ArtLayer") {
+                try {
+                    layer.visible = true;
+                    n++;
+                } catch (eArt) {}
+            }
+        });
+        if (n) {
+            writeLog(null, "show back Text groups=" + n + " in '" + docName(doc) + "'");
+        }
+        return n;
+    }
+
+    function shouldEnterForCardSide(layer, job, loose) {
+        if (!isSmartObject(layer)) {
+            return false;
+        }
+        var scene = (job && job.scene) || {};
+        var n = "";
+        try {
+            n = String(layer.name);
+        } catch (e) {
+            return false;
+        }
+        if (isPhotoName(n, job)) {
+            return false;
+        }
+        if (scene.photo_smart_object && n === scene.photo_smart_object) {
+            return false;
+        }
+        if (scene.background_smart_object && n === scene.background_smart_object) {
+            return false;
+        }
+        if (scene.original_layer && n === scene.original_layer) {
+            return false;
+        }
+        if (scene.hand_smart_object && n === scene.hand_smart_object) {
+            return false;
+        }
+        if (nameInList(n, scene.skip_smart_objects || job.skip_smart_objects)) {
+            return false;
+        }
+        if (isCardSmartObject(layer, job) || isWrapperSmartObject(layer, job)) {
+            return true;
+        }
+        return !!loose;
+    }
+
     function showCardSide(doc, job, side, depth) {
         depth = depth || 0;
         var show = cardSideNames(job, side);
         var hide = cardSideNames(job, side === "back" ? "front" : "back");
+        var shownHere = 0;
         var shown = 0;
+        var textShown = 0;
         var i;
-        for (i = 0; i < hide.length; i++) {
-            toggleNamedLayers(doc, hide[i], false);
-        }
         for (i = 0; i < show.length; i++) {
-            shown += toggleNamedLayers(doc, show[i], true);
+            shownHere += countNamedLayers(doc, show[i]);
         }
-        if (shown < 1 && depth < 4) {
-            shown += showCardSideInWrappers(doc, job, side, depth + 1);
+        if (shownHere > 0) {
+            for (i = 0; i < hide.length; i++) {
+                toggleNamedLayers(doc, hide[i], false);
+            }
+            for (i = 0; i < show.length; i++) {
+                shown += toggleNamedLayers(doc, show[i], true);
+            }
         }
         try {
             if (side === "back") {
+                textShown = showBackTextGroups(doc);
                 toggleNamedLayers(doc, "Text", true);
             } else {
                 hideGroupsNamed(doc, "Text");
             }
         } catch (eTxtSide) {}
-        writeLog(null, "card side '" + side + "' shown=" + shown + " depth=" + depth);
+        if (shown < 1 && textShown > 0 && side === "back") {
+            shown = textShown;
+        }
+        if (shown < 1 && depth < 5) {
+            shown += showCardSideInSmartObjects(doc, job, side, depth + 1);
+        }
+        writeLog(
+            null,
+            "card side '" + side + "' shown=" + shown + " depth=" + depth +
+                " here=" + shownHere + " text=" + textShown
+        );
         return shown > 0;
     }
 
-    function showCardSideInWrappers(doc, job, side, depth) {
+    function showCardSideInSmartObjects(doc, job, side, depth) {
         var n = 0;
-        function walk(layers) {
+        function walk(layers, loose) {
             var i;
             for (i = 0; i < layers.length; i++) {
                 var layer = layers[i];
@@ -2074,8 +2254,9 @@ var OTRIS_JSX_VERSION = "2026-09-08.1";
                     continue;
                 }
                 if (layer.typename === "LayerSet") {
-                    walk(layer.layers);
-                } else if (layer.typename === "ArtLayer" && isSmartObject(layer) && isWrapperSmartObject(layer, job)) {
+                    walk(layer.layers, loose);
+                } else if (layer.typename === "ArtLayer" && shouldEnterForCardSide(layer, job, loose)) {
+                    writeLog(null, "card side enter SO '" + layer.name + "' for '" + side + "'");
                     editSmartObject(layer, function (innerDoc) {
                         if (showCardSide(innerDoc, job, side, depth)) {
                             n++;
@@ -2085,28 +2266,41 @@ var OTRIS_JSX_VERSION = "2026-09-08.1";
             }
         }
         try {
-            walk(doc.layers);
+            walk(doc.layers, false);
+            if (n < 1) {
+                walk(doc.layers, true);
+            }
         } catch (eW) {
-            writeLog(null, "showCardSide wrappers: " + eW);
+            writeLog(null, "showCardSide SO: " + eW);
         }
         return n;
     }
 
     function exportBackJpeg(workName, job, jpgBack) {
         if (!jpgBack) {
+            writeLog(null, "back jpeg: no output path");
             return false;
         }
         if (!activateByName(workName)) {
             writeLog(null, "back jpeg: work doc lost");
             return false;
         }
-        if (!showCardSide(app.activeDocument, job, "back", 0)) {
-            writeLog(null, "back jpeg: no Back layer, skip");
-            return false;
+        var flipped = false;
+        try {
+            flipped = showCardSide(app.activeDocument, job, "back", 0);
+        } catch (eSide) {
+            writeLog(null, "back jpeg: show side failed: " + eSide);
+        }
+        if (!flipped) {
+            writeLog(null, "back jpeg: no Back layer at top, tried card SO / Text");
         }
         try {
             exportJpeg(workName, jpgBack);
-            return fileReady(jpgBack);
+            var ok = fileReady(jpgBack);
+            writeLog(null, ok
+                ? ("back jpeg saved (" + fileSize(jpgBack) + " bytes)")
+                : "back jpeg missing after export");
+            return ok;
         } catch (eBack) {
             writeLog(null, "back jpeg failed: " + eBack);
             return false;
@@ -2328,7 +2522,7 @@ var OTRIS_JSX_VERSION = "2026-09-08.1";
         var byName = job.layers_by_name || {};
         var hits = updateNamedTextLayers(doc, byName, job.text_replacements);
         applyCategoryVisibility(doc, job.category_visibility || null, byName);
-        updateTextGroupByIndex(doc, job.text_group_values || [], job.text_group_visibility || null);
+        updateTextGroupByIndex(doc, job.text_group_values || [], job.text_group_visibility || null, job);
         hideGroupsNamed(doc, "Text");
         walkLayers(doc.layers, job, depth || 0);
         writeLog(null, "applyJob depth=" + (depth || 0) + " doc='" + docName(doc) + "' namedHits=" + hits);
@@ -2553,7 +2747,8 @@ var OTRIS_JSX_VERSION = "2026-09-08.1";
             saveMaster(workName, psdFile, isPsb);
             exportJpeg(workName, jpgFile);
             if (job.output_jpg_back) {
-                exportBackJpeg(workName, job, new File(job.output_jpg_back));
+                var backOk = exportBackJpeg(workName, job, new File(job.output_jpg_back));
+                writeLog(jobPath, backOk ? "back jpeg ok" : "back jpeg missing");
             }
         } catch (e) {
             renderError = e;

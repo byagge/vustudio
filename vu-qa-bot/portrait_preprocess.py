@@ -108,9 +108,15 @@ def prepare_portrait_file(
         focus = _cover_crop(im, cfg.width, cfg.height)
 
         focus = _match_document_background(focus)
-        focus = ImageEnhance.Contrast(focus).enhance(1.06)
-        focus = ImageEnhance.Brightness(focus).enhance(1.02)
-        focus = ImageEnhance.Sharpness(focus).enhance(1.15)
+        if face_focus:
+            focus = ImageEnhance.Contrast(focus).enhance(1.06)
+            focus = ImageEnhance.Brightness(focus).enhance(1.02)
+            focus = ImageEnhance.Sharpness(focus).enhance(1.15)
+        else:
+            # ИИ-кадр уже как фото на бланк: без «студийной» резкости
+            focus = ImageEnhance.Color(focus).enhance(0.92)
+            focus = ImageEnhance.Contrast(focus).enhance(0.97)
+            focus = ImageEnhance.Sharpness(focus).enhance(0.92)
 
         focus.save(
             destination,

@@ -262,11 +262,11 @@ class PhotoshopRenderer:
         if jpg_back_out.is_file() and jpg_back_out.stat().st_size > 0:
             task.jpg_back_path = str(jpg_back_out)
         else:
-            jsx_log = _read_jsx_log(job_file)
-            if "no Back layer" not in jsx_log:
-                _wait_outputs(jpg_back_out, timeout=6)
-                if jpg_back_out.is_file() and jpg_back_out.stat().st_size > 0:
-                    task.jpg_back_path = str(jpg_back_out)
+            _wait_outputs(jpg_back_out, timeout=12)
+            if jpg_back_out.is_file() and jpg_back_out.stat().st_size > 0:
+                task.jpg_back_path = str(jpg_back_out)
+            else:
+                log.warning("back jpeg missing for job %s", work_id)
         outputs = [p for p in (psd_out, jpg_out, jpg_back_out) if p.is_file() and p.stat().st_size > 0]
         return RenderResult(
             job=RenderJob(record=None, text_block=task.text_block),

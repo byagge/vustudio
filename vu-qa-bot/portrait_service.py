@@ -140,6 +140,9 @@ def generate_ai_portrait(
 ) -> PortraitResult:
     """ИИ-портрет → portraits/gen_{job_id}.jpg (task3 §5.2, §6)."""
     cfg = settings or PortraitSettings.from_env()
+    fields = dict(fields or {})
+    if job_id:
+        fields["_seed"] = job_id
     jid = job_id or portrait_cache_key(fields)
     out = portraits_dir() / f"gen_{jid}.jpg"
     log.info(

@@ -3,12 +3,35 @@
 """Промпт и демография для ИИ-портрета (официальное фото на документ)."""
 from __future__ import annotations
 
+import hashlib
 from datetime import date, datetime
 from typing import Any
 
 from vu_testdata import gender_from
 
-_PROMPT_VERSION = "vu-passport-v2"
+_PROMPT_VERSION = "vu-id-booth-v3"
+
+_HAIR = (
+    "short straight dark brown hair",
+    "short wavy black hair",
+    "cropped ash-brown hair",
+    "neat side-parted brown hair",
+    "short chestnut hair with a high forehead",
+    "dense dark hair combed back",
+    "light brown short hair",
+    "black hair with a slight widow's peak",
+)
+
+_FACE = (
+    "oval face, thin straight brows, narrow nose",
+    "square jaw, close-set dark eyes",
+    "round face, wide-set eyes, short nose",
+    "long face, high cheekbones, thin lips",
+    "soft chin, straight brows, medium nose",
+    "angular cheekbones, deep-set eyes",
+    "broad forehead, small mouth, brown eyes",
+    "heart-shaped face, thicker brows, pale skin",
+)
 
 
 def estimate_age(birth_date: str, *, today: date | None = None) -> int:
@@ -39,40 +62,69 @@ def gender_label(gender: str) -> str:
     return "woman" if gender == "F" else "man"
 
 
+def _variation_key(fields: dict[str, Any]) -> str:
+    raw = "|".join(
+        [
+            str(fields.get("surname_ru") or ""),
+            str(fields.get("given_ru") or ""),
+            str(fields.get("birth_date") or ""),
+            str(fields.get("birth_place_ru") or ""),
+            str(fields.get("_seed") or fields.get("job_id") or ""),
+        ]
+    )
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def portrait_variation(fields: dict[str, Any]) -> dict[str, str]:
+    """Детерминированные черты лица — разные люди / задачи не копируют один типаж."""
+    digest = _variation_key(fields)
+    n = int(digest[:8], 16)
+    return {
+        "token": digest[:10],
+        "hair": _HAIR[n % len(_HAIR)],
+        "face": _FACE[(n // len(_HAIR)) % len(_FACE)],
+    }
+
+
 def build_portrait_prompt(fields: dict[str, Any]) -> str:
     """
-    Промпт для генерации реалистичного фото на документ.
-    ФИО в промпт не включаем — только демография (privacy + меньше артефактов).
+    Промпт: фото как в окошке бланка ВУ, не студийный портрет.
+    ФИО в промпт не включаем — только демография + уникальный типаж.
     """
     age = estimate_age(fields.get("birth_date") or "")
     gender = gender_label(estimate_gender(fields))
+    var = portrait_variation(fields)
     return (
-        f"Professional passport-style ID photograph of a {age}-year-old Russian {gender}, "
-        "front-facing, neutral expression, mouth closed, eyes open and looking at camera, "
-        "even soft studio lighting, plain light gray background, shoulders and upper chest visible, "
-        "sharp focus on face, realistic skin texture and pores, no makeup exaggeration, "
-        "no hat, no glasses glare, no smile, photorealistic, high detail, "
-        "official government ID photo quality, 35mm lens look"
+        f"Official Russian driving-licence ID card photograph of a {age}-year-old {gender}, "
+        f"unique identity {var['token']}, {var['hair']}, {var['face']}. "
+        "This is a government document booth photo printed into a plastic card window, "
+        "not a studio, fashion or LinkedIn portrait. "
+        "Head-and-shoulders 3:4 crop, face centered, ears visible, both shoulders in frame. "
+        "Neutral expression, mouth closed, no smile, eyes open looking straight at the camera. "
+        "Flat even frontal lighting, no rim light, no cinematic grade, no dramatic shadows. "
+        "Matte skin, realistic pores, slight document-print softness. "
+        "Plain light-gray ID-card background, no scenery, no objects, no text, no watermark. "
+        "Photorealistic, ISO/IEC 19794-5 compliant passport photo look."
     )
 
 
 def build_portrait_edit_prompt(fields: dict[str, Any] | None = None) -> str:
-    """Промпт img2img: тот же человек, фон вырезан, вид официального фото на документ."""
+    """Промпт img2img: тот же человек, вид официального фото на документ."""
     fields = fields or {}
     age = estimate_age(fields.get("birth_date") or "")
     gender = gender_label(estimate_gender(fields))
     who = f"this {age}-year-old {gender}" if fields.get("birth_date") or fields.get("given_ru") else "this person"
     return (
-        f"Edit this photo into a professional passport-style ID photograph of {who}. "
+        f"Edit this photo into an official Russian driving-licence ID card photograph of {who}. "
         "Keep the same identity: same face, age, gender, hair, skin tone and distinctive features. "
-        "Front-facing head-and-shoulders, neutral expression, mouth closed, eyes open, looking at camera. "
+        "Make it look printed in the photo window of a plastic document, not a studio portrait. "
+        "Front-facing head-and-shoulders 3:4 crop, neutral expression, mouth closed, eyes open. "
         "Remove the original background completely (cut-out), no scenery, no objects, no text. "
-        "Even soft studio lighting, official government ID photo quality, photorealistic, 35mm lens look."
+        "Flat even frontal lighting, matte skin, plain light-gray ID-card paper background."
     )
 
 
 def portrait_cache_key(fields: dict[str, Any]) -> str:
-    import hashlib
     import json
 
     payload = {
@@ -81,6 +133,8 @@ def portrait_cache_key(fields: dict[str, Any]) -> str:
         "given_ru": fields.get("given_ru"),
         "surname_ru": fields.get("surname_ru"),
         "gender": estimate_gender(fields),
+        "seed": fields.get("_seed") or fields.get("job_id") or "",
+        "token": portrait_variation(fields)["token"],
     }
     raw = json.dumps(payload, ensure_ascii=False, sort_keys=True)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]

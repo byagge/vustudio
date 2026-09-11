@@ -7,6 +7,7 @@ from pathlib import Path
 
 from photoshop_text import (
     prepare_substitute_job,
+    resolve_jpg_back_path,
     substitute_text_queued,
     validate_text_block,
     wait_substitute,
@@ -45,6 +46,17 @@ class TestPhotoshopText(unittest.TestCase):
             self.assertEqual(by_field["surname_ru"], "АБСАЛЯМОВ")
             self.assertEqual(by_field["authority_ru"], "ГИБДД 0469")
             self.assertEqual(by_field["series_part1"], "04")
+
+    def test_resolve_jpg_back_not_front(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            front = root / "vu_job.jpg"
+            back = root / "vu_job_back.jpg"
+            front.write_bytes(b"front")
+            back.write_bytes(b"back-side")
+            self.assertEqual(resolve_jpg_back_path(front, front), back)
+            self.assertEqual(resolve_jpg_back_path(front, back), back)
+            self.assertEqual(resolve_jpg_back_path(front, None), back)
 
     def test_queue_flow(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -267,8 +267,16 @@
           <div class="track"><div class="track-fill" id="renderTrackFill"></div></div>
           <div id="renderSteps" class="timeline"></div>
           <p class="note" id="renderMessage"></p>
-          <div class="preview" id="renderPreview" hidden><img id="renderPreviewImg" alt="Лицевая"></div>
-          <div class="preview" id="renderPreviewBack" hidden><img id="renderPreviewBackImg" alt="Оборот"></div>
+          <div class="preview-row" id="renderPreviews">
+            <div class="preview" id="renderPreview" hidden>
+              <span class="preview-cap">Лицевая</span>
+              <img id="renderPreviewImg" alt="Лицевая">
+            </div>
+            <div class="preview" id="renderPreviewBack" hidden>
+              <span class="preview-cap">Оборот</span>
+              <img id="renderPreviewBackImg" alt="Оборот">
+            </div>
+          </div>
           <div class="row-actions" id="renderDownloads" hidden>
             <a class="btn primary" id="dlJpg" href="#"><span class="ic" data-icon="download" data-icon-size="14"></span> JPG лицевая</a>
             <a class="btn primary" id="dlJpgBack" href="#" hidden><span class="ic" data-icon="download" data-icon-size="14"></span> JPG оборот</a>

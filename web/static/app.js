@@ -60,7 +60,9 @@ const hydrate = (el) => window.Icons && Icons.hydrate(el);
     tg.ready();
     tg.expand();
     if (typeof tg.disableVerticalSwipes === "function") tg.disableVerticalSwipes();
-    document.documentElement.classList.add("app-shell");
+    const platform = String(tg.platform || "").toLowerCase();
+    const mobile = ["ios", "android", "android_x"].includes(platform);
+    if (mobile) document.documentElement.classList.add("app-shell");
   } catch {}
 })();
 const esc = (s) =>
@@ -1201,14 +1203,16 @@ async function openJobModal(jobId) {
     ${fieldRows(data.fields)}
     <h4 class="sub-title">О задаче</h4>
     ${meta}
-    ${data.jpg_path ? `<div class="preview" id="jobPreview"><img id="jobPreviewImg" alt="Лицевая"></div>` : ""}
-    ${data.jpg_back_path ? `<div class="preview" id="jobPreviewBack"><img id="jobPreviewBackImg" alt="Оборот"></div>` : ""}
+    <div class="preview-row">
+      ${data.jpg_path ? `<div class="preview" id="jobPreview"><span class="preview-cap">Лицевая</span><img id="jobPreviewImg" alt="Лицевая"></div>` : ""}
+      ${guessBackPath(data.jpg_path, data.jpg_back_path) ? `<div class="preview" id="jobPreviewBack"><span class="preview-cap">Оборот</span><img id="jobPreviewBackImg" alt="Оборот"></div>` : ""}
+    </div>
   `;
 
   const foot =
     status === "done"
       ? `<button type="button" class="btn secondary" id="jobDlPsd">Скачать PSD</button>
-         ${data.jpg_back_path ? `<button type="button" class="btn primary" id="jobDlJpgBack">JPG оборот</button>` : ""}
+         ${guessBackPath(data.jpg_path, data.jpg_back_path) ? `<button type="button" class="btn primary" id="jobDlJpgBack">JPG оборот</button>` : ""}
          <button type="button" class="btn primary" id="jobDlJpg">JPG лицевая</button>`
       : `<button type="button" class="btn secondary" id="jobWatch">Следить за выполнением</button>
          <button type="button" class="btn primary" data-close-modal>Закрыть</button>`;
@@ -1226,11 +1230,12 @@ async function openJobModal(jobId) {
       .catch(() => {});
   }
 
+  const backPath = guessBackPath(data.jpg_path, data.jpg_back_path);
   $("jobDlJpg")?.addEventListener("click", () => downloadFile(data.jpg_path, "jpg", "preview.jpg"));
-  $("jobDlJpgBack")?.addEventListener("click", () => downloadFile(data.jpg_back_path, "jpg", "preview_back.jpg"));
+  $("jobDlJpgBack")?.addEventListener("click", () => downloadFile(backPath, "jpg", "preview_back.jpg"));
   $("jobDlPsd")?.addEventListener("click", () => downloadFile(data.psd_path, "psb", "vu.psb"));
-  if (data.jpg_back_path) {
-    fetch(`/api/v1/render/download/jpg?path=${encodeURIComponent(data.jpg_back_path)}`, {
+  if (backPath) {
+    fetch(`/api/v1/render/download/jpg?path=${encodeURIComponent(backPath)}`, {
       headers: headers(false),
     })
       .then((r) => (r.ok ? r.blob() : null))
@@ -1258,7 +1263,9 @@ async function downloadFile(path, kind, filename) {
     const a = document.createElement("a");
     a.href = URL.createObjectURL(b);
     a.download = filename;
+    document.body.appendChild(a);
     a.click();
+    a.remove();
     URL.revokeObjectURL(a.href);
   } catch (e) {
     toast(e.message, "bad");
@@ -1338,12 +1345,26 @@ function paintStatus(data) {
   $("homeJobNote").textContent = msg;
 }
 
+function guessBackPath(front, back) {
+  if (back && (!front || back !== front)) return back;
+  if (!front) return "";
+  const m = String(front).match(/^(.*)(\.[^.]+)$/);
+  return m ? `${m[1]}_back${m[2]}` : `${front}_back`;
+}
+
 function bindDownload(id, path, kind, filename) {
   const el = $(id);
-  if (!el || !path) return;
-  const url = `/api/v1/render/download/${kind}?path=${encodeURIComponent(path)}`;
+  if (!el) return;
+  el.hidden = !path;
+  el.classList.toggle("hidden", !path);
   el.onclick = async (ev) => {
     ev.preventDefault();
+    ev.stopPropagation();
+    if (!path) {
+      toast("Файл ещё не готов", "bad");
+      return;
+    }
+    const url = `/api/v1/render/download/${kind}?path=${encodeURIComponent(path)}`;
     try {
       const r = await fetch(url, { headers: headers(false) });
       if (!r.ok) throw new Error("Не удалось скачать");
@@ -1351,7 +1372,9 @@ function bindDownload(id, path, kind, filename) {
       const a = document.createElement("a");
       a.href = URL.createObjectURL(b);
       a.download = filename;
+      document.body.appendChild(a);
       a.click();
+      a.remove();
       URL.revokeObjectURL(a.href);
     } catch (e) {
       toast(e.message, "bad");
@@ -1383,16 +1406,15 @@ async function poll(jobId) {
       clearInterval(pollTimer);
       $("renderDownloads").hidden = false;
       $("homeJobActions").hidden = false;
+      const backPath = guessBackPath(data.jpg_path, data.jpg_back_path);
       bindDownload("dlJpg", data.jpg_path, "jpg", "preview.jpg");
-      bindDownload("dlJpgBack", data.jpg_back_path, "jpg", "preview_back.jpg");
+      bindDownload("dlJpgBack", backPath, "jpg", "preview_back.jpg");
       bindDownload("dlPsd", data.psd_path, "psb", "vu.psb");
       bindDownload("homeDlJpg", data.jpg_path, "jpg", "preview.jpg");
-      bindDownload("homeDlJpgBack", data.jpg_back_path, "jpg", "preview_back.jpg");
+      bindDownload("homeDlJpgBack", backPath, "jpg", "preview_back.jpg");
       bindDownload("homeDlPsd", data.psd_path, "psb", "vu.psb");
-      if ($("dlJpgBack")) $("dlJpgBack").hidden = !data.jpg_back_path;
-      if ($("homeDlJpgBack")) $("homeDlJpgBack").hidden = !data.jpg_back_path;
       await showPreview(data.jpg_path);
-      await showPreview(data.jpg_back_path, "renderPreviewBackImg", "renderPreviewBack");
+      await showPreview(backPath, "renderPreviewBackImg", "renderPreviewBack");
       toast("Отрисовка завершена", "ok");
       localStorage.removeItem(STORE.job);
     } else if (data.status === "failed") {

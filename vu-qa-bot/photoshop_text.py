@@ -56,6 +56,24 @@ class SubstituteResult:
         return [p for p in (self.psd_path, self.jpg_path, self.jpg_back_path) if p]
 
 
+def resolve_jpg_back_path(jpg_path: str | Path | None, jpg_back_path: str | Path | None) -> Path | None:
+    """Не путать оборот с лицевой: если путь тот же или файла нет — ищем *_back.jpg рядом."""
+    front = Path(jpg_path) if jpg_path else None
+    back = Path(jpg_back_path) if jpg_back_path else None
+    if back and back.is_file():
+        if not front or back.resolve() != front.resolve():
+            return back
+    if front:
+        sibling = front.with_name(f"{front.stem}_back{front.suffix}")
+        if sibling.is_file():
+            return sibling
+        loose = list(front.parent.glob(f"{front.stem}_back.*")) if front.parent.is_dir() else []
+        for cand in loose:
+            if cand.suffix.lower() in {".jpg", ".jpeg"} and cand.is_file():
+                return cand
+    return None
+
+
 def _queue_dir() -> Path:
     p = Path(os.getenv("RENDER_QUEUE_DIR", str(ROOT / "queue")))
     p.mkdir(parents=True, exist_ok=True)
@@ -319,7 +337,7 @@ def wait_substitute(job_id: str, timeout: float = 900, poll: float = 2.0) -> Sub
         status=task.status,
         psd_path=Path(task.psd_path) if task.psd_path else None,
         jpg_path=Path(task.jpg_path) if task.jpg_path else None,
-        jpg_back_path=Path(task.jpg_back_path) if getattr(task, "jpg_back_path", None) else None,
+        jpg_back_path=resolve_jpg_back_path(task.jpg_path, getattr(task, "jpg_back_path", None)),
         fields=task.fields,
     )
 
@@ -337,7 +355,7 @@ def get_substitute_status(job_id: str) -> SubstituteResult | None:
         status=task.status,
         psd_path=Path(task.psd_path) if task.psd_path else None,
         jpg_path=Path(task.jpg_path) if task.jpg_path else None,
-        jpg_back_path=Path(task.jpg_back_path) if getattr(task, "jpg_back_path", None) else None,
+        jpg_back_path=resolve_jpg_back_path(task.jpg_path, getattr(task, "jpg_back_path", None)),
         fields=task.fields,
     )
 

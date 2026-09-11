@@ -42,6 +42,8 @@ class TestPortraitPrompt(unittest.TestCase):
         p = build_portrait_prompt(fields)
         self.assertNotIn("ИВАНОВ", p)
         self.assertIn("man", p.lower())
+        self.assertIn("driving-licence", p.lower())
+        self.assertIn("document booth", p.lower())
 
     def test_edit_prompt_cutout(self):
         p = build_portrait_edit_prompt({"birth_date": "08.09.1983", "given_ru": "ИВАН ИВАНОВИЧ"})
@@ -54,6 +56,15 @@ class TestPortraitPrompt(unittest.TestCase):
 
     def test_age(self):
         self.assertGreaterEqual(estimate_age("08.09.1983"), 18)
+
+    def test_unique_faces_same_year(self):
+        from portrait_prompt import build_portrait_prompt as build
+
+        a = build({"surname_ru": "ИВАНОВ", "given_ru": "ИВАН ИВАНОВИЧ", "birth_date": "01.01.1990"})
+        b = build({"surname_ru": "ПЕТРОВ", "given_ru": "ПЁТР ПЕТРОВИЧ", "birth_date": "31.12.1990"})
+        self.assertNotEqual(a, b)
+        self.assertIn("unique identity", a)
+        self.assertIn("unique identity", b)
 
 
 class TestPortraitPreprocess(unittest.TestCase):

@@ -71,9 +71,9 @@ Mini App «Панель» в боте только если `WEB_BASE_URL` — �
 - `Back` — оборот (группа `Text`: даты категорий B/B1/M).
 - На лицевой группу `Text` скрываем, на обороте оставляем видимой.
 
-Если слоя `Back` в PSB нет, второй JPG не создаётся (в логе JSX: `back jpeg: no Back layer`). Имя слоя можно поменять в `vu-qa-bot/templates/mockup_hand.json` → `scene.back_smart_objects`.
+Оборот ищется как слой `Back` и как группа `Text` внутри карточки / wrapper SO. Имя слоя можно поменять в `vu-qa-bot/templates/mockup_hand.json` → `scene.back_smart_objects`.
 
-JSX: `photoshop/render.jsx`, версия `2026-09-08.1`. На VPS копировать этот файл и **перезапустить worker**.
+JSX: `photoshop/render.jsx`, версия `2026-09-11.2`. На VPS копировать этот файл и **перезапустить worker**.
 
 ## Категории
 
