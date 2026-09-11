@@ -1,5 +1,5 @@
 #target photoshop
-var OTRIS_JSX_VERSION = "2026-09-11.2";
+var OTRIS_JSX_VERSION = "2026-09-11.3";
 
 (function () {
     if (typeof app === "undefined" || !app.documents) {
@@ -666,30 +666,189 @@ var OTRIS_JSX_VERSION = "2026-09-11.2";
         }
         var groups = [];
         findGroupsNamed(doc, "Text", groups);
-        for (var g = 0; g < groups.length; g++) {
-            if (groupHasDirectSmartObject(groups[g]) && !groupHasDirectTextLayers(groups[g])) {
-                continue;
-            }
-            var textLayers = [];
-            collectTextLayers(groups[g], textLayers, true);
-            if (textLayers.length < values.length) {
-                textLayers = [];
-                collectTextLayers(groups[g], textLayers, false);
-            }
-            writeLog(
-                null,
-                "text-group slots=" + textLayers.length + " values=" + values.length +
-                    " in '" + docName(doc) + "'"
-            );
-            for (var i = 0; i < textLayers.length; i++) {
-                var val = i < values.length ? values[i] : "";
-                var vis = !visibility || i >= visibility.length ? true : visibility[i];
-                setTextSafe(textLayers[i], val, vis);
+        if (!(job && job._keepTextVisible && job.back_table_map)) {
+            for (var g = 0; g < groups.length; g++) {
+                if (groupHasDirectSmartObject(groups[g]) && !groupHasDirectTextLayers(groups[g])) {
+                    continue;
+                }
+                var textLayers = [];
+                collectTextLayers(groups[g], textLayers, true);
+                if (textLayers.length < values.length) {
+                    textLayers = [];
+                    collectTextLayers(groups[g], textLayers, false);
+                }
+                writeLog(
+                    null,
+                    "text-group slots=" + textLayers.length + " values=" + values.length +
+                        " in '" + docName(doc) + "'"
+                );
+                for (var i = 0; i < textLayers.length; i++) {
+                    var val = i < values.length ? values[i] : "";
+                    var vis = !visibility || i >= visibility.length ? true : visibility[i];
+                    setTextSafe(textLayers[i], val, vis);
+                }
             }
         }
         if (job && job._keepTextVisible) {
             fillDateLikeLayers(doc, values, visibility);
+            applyBackTableDates(doc, job);
         }
+    }
+
+    function layerMid(layer) {
+        try {
+            var b = layer.bounds;
+            return {
+                x: (b[0].as("px") + b[2].as("px")) / 2,
+                y: (b[1].as("px") + b[3].as("px")) / 2
+            };
+        } catch (e) {
+            return { x: 0, y: 0 };
+        }
+    }
+
+    function isFillableDateCell(layer) {
+        var t = layerTextContents(layer).replace(/\s+/g, "");
+        if (!t || t === "—" || t === "-" || t === "." || t === "…" || t === "–") {
+            return true;
+        }
+        if (/^\d{2}[.\-]\d{2}[.\-]\d{4}$/.test(t)) {
+            return true;
+        }
+        if (/^[0xXхХ.·\-—_]{4,}$/.test(t)) {
+            return true;
+        }
+        return isDateLikeLayer(layer);
+    }
+
+    function applyBackTableDates(doc, job) {
+        var table = (job && job.back_table_map) || {};
+        var order = (job && job.back_table_order) || [
+            "A", "A1", "B", "B1", "C", "C1", "D", "D1",
+            "BE", "CE", "DE", "Tm", "Tb", "M"
+        ];
+        var named = fillBackByCategoryName(doc, table);
+        var grid = fillBackByGrid(doc, table, order);
+        writeLog(null, "back table dates named=" + named + " grid=" + grid + " in '" + docName(doc) + "'");
+    }
+
+    function fillBackByCategoryName(doc, table) {
+        var n = 0;
+        var cat;
+        for (cat in table) {
+            if (!table.hasOwnProperty(cat) || !table[cat]) {
+                continue;
+            }
+            var groups = [];
+            findGroupsNamed(doc, cat, groups);
+            findGroupsNamed(doc, String(cat).toLowerCase(), groups);
+            var g;
+            for (g = 0; g < groups.length; g++) {
+                var cells = [];
+                collectTextLayers(groups[g], cells, false);
+                var dates = [];
+                var i;
+                for (i = 0; i < cells.length; i++) {
+                    if (isFillableDateCell(cells[i])) {
+                        dates.push(cells[i]);
+                    }
+                }
+                dates.sort(function (a, b) {
+                    var am = layerMid(a);
+                    var bm = layerMid(b);
+                    if (Math.abs(am.y - bm.y) > 8) {
+                        return am.y - bm.y;
+                    }
+                    return am.x - bm.x;
+                });
+                if (dates[0] && table[cat].open) {
+                    setTextSafe(dates[0], table[cat].open, true);
+                    n++;
+                }
+                if (dates[1] && table[cat].expiry) {
+                    setTextSafe(dates[1], table[cat].expiry, true);
+                    n++;
+                }
+            }
+        }
+        return n;
+    }
+
+    function fillBackByGrid(doc, table, order) {
+        var groups = [];
+        findGroupsNamed(doc, "Text", groups);
+        var layers = [];
+        var g;
+        if (groups.length) {
+            for (g = 0; g < groups.length; g++) {
+                if (groupHasDirectSmartObject(groups[g]) && !groupHasDirectTextLayers(groups[g])) {
+                    continue;
+                }
+                collectTextLayers(groups[g], layers, false);
+            }
+        } else {
+            collectTextLayers(doc, layers, false);
+        }
+        var cells = [];
+        var i;
+        for (i = 0; i < layers.length; i++) {
+            if (isFillableDateCell(layers[i])) {
+                cells.push(layers[i]);
+            }
+        }
+        if (cells.length < 2) {
+            return 0;
+        }
+        cells.sort(function (a, b) {
+            var am = layerMid(a);
+            var bm = layerMid(b);
+            if (Math.abs(am.y - bm.y) > 10) {
+                return am.y - bm.y;
+            }
+            return am.x - bm.x;
+        });
+        var rows = [];
+        var cur = [cells[0]];
+        var lastY = layerMid(cells[0]).y;
+        for (i = 1; i < cells.length; i++) {
+            var y = layerMid(cells[i]).y;
+            if (Math.abs(y - lastY) > 14) {
+                rows.push(cur);
+                cur = [cells[i]];
+            } else {
+                cur.push(cells[i]);
+            }
+            lastY = y;
+        }
+        rows.push(cur);
+        var active = [];
+        for (i = 0; i < order.length; i++) {
+            if (table[order[i]] && table[order[i]].open) {
+                active.push(order[i]);
+            }
+        }
+        var useOrder = (rows.length <= 6 && active.length) ? active : order;
+        var n = 0;
+        for (i = 0; i < rows.length; i++) {
+            var cat = i < useOrder.length ? useOrder[i] : "";
+            var data = cat ? table[cat] : null;
+            if (!data || !data.open) {
+                continue;
+            }
+            var cols = rows[i].slice();
+            cols.sort(function (a, b) {
+                return layerMid(a).x - layerMid(b).x;
+            });
+            if (cols[0]) {
+                setTextSafe(cols[0], data.open, true);
+                n++;
+            }
+            if (cols[1] && data.expiry) {
+                setTextSafe(cols[1], data.expiry, true);
+                n++;
+            }
+        }
+        return n;
     }
 
     function layerTextContents(layer) {
@@ -1447,11 +1606,11 @@ var OTRIS_JSX_VERSION = "2026-09-11.2";
             return;
         }
         var scale = Math.max(cw / w, ch / h) * 100;
-        layer.resize(scale, scale, AnchorPosition.MIDDLECENTER);
+        layer.resize(scale, scale, AnchorPosition.TOPCENTER);
         b = layer.bounds;
         var cx = (b[0].as("px") + b[2].as("px")) / 2;
-        var cy = (b[1].as("px") + b[3].as("px")) / 2;
-        layer.translate(cw / 2 - cx, ch / 2 - cy);
+        var top = b[1].as("px");
+        layer.translate(cw / 2 - cx, -top);
     }
 
     function convertLayerToSmartObject(layer) {
@@ -1936,6 +2095,13 @@ var OTRIS_JSX_VERSION = "2026-09-11.2";
             updateTextGroupByIndex(doc, textVals || [], textVis || null, job);
         } catch (eGrp) {
             writeLog(null, "updateTextGroupByIndex: " + eGrp);
+        }
+        try {
+            if (job && job._keepTextVisible) {
+                applyBackTableDates(doc, job);
+            }
+        } catch (eBackTbl) {
+            writeLog(null, "applyBackTableDates: " + eBackTbl);
         }
         try {
             if (!(job && job._keepTextVisible)) {

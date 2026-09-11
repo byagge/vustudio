@@ -9,7 +9,7 @@ from typing import Any
 
 from vu_testdata import gender_from
 
-_PROMPT_VERSION = "vu-id-booth-v3"
+_PROMPT_VERSION = "vu-id-booth-v4"
 
 _HAIR = (
     "short straight dark brown hair",
@@ -99,7 +99,10 @@ def build_portrait_prompt(fields: dict[str, Any]) -> str:
         f"unique identity {var['token']}, {var['hair']}, {var['face']}. "
         "This is a government document booth photo printed into a plastic card window, "
         "not a studio, fashion or LinkedIn portrait. "
-        "Head-and-shoulders 3:4 crop, face centered, ears visible, both shoulders in frame. "
+        "Tight ICAO/ISO 19794-5 3:4 crop: crown near the top edge with only a small gray gap, "
+        "eyes in the upper half, ears visible, upper shoulders touching the bottom edge. "
+        "The head fills most of the frame — no large empty ceiling above the hair, "
+        "do not place the head in the vertical center like a studio shot. "
         "Neutral expression, mouth closed, no smile, eyes open looking straight at the camera. "
         "Flat even frontal lighting, no rim light, no cinematic grade, no dramatic shadows. "
         "Matte skin, realistic pores, slight document-print softness. "
@@ -118,7 +121,9 @@ def build_portrait_edit_prompt(fields: dict[str, Any] | None = None) -> str:
         f"Edit this photo into an official Russian driving-licence ID card photograph of {who}. "
         "Keep the same identity: same face, age, gender, hair, skin tone and distinctive features. "
         "Make it look printed in the photo window of a plastic document, not a studio portrait. "
-        "Front-facing head-and-shoulders 3:4 crop, neutral expression, mouth closed, eyes open. "
+        "Tight ICAO 3:4 crop: crown near the top, eyes in the upper half, "
+        "shoulders at the bottom, no empty ceiling above the head. "
+        "Neutral expression, mouth closed, eyes open. "
         "Remove the original background completely (cut-out), no scenery, no objects, no text. "
         "Flat even frontal lighting, matte skin, plain light-gray ID-card paper background."
     )

@@ -40,11 +40,23 @@ class TestTextRealism(unittest.TestCase):
         hand = build_render_payload(block, load_template("mockup_hand"))
         self.assertEqual(len(blank["text_group_values"]), 12)
         self.assertEqual(len(hand["text_group_values"]), 12)
+        self.assertEqual(hand["back_table_map"]["B"]["open"], "27.02.2009")
+        self.assertIn("B", hand["back_table_order"])
         self.assertEqual(len(blank["text_group_visibility"]), 12)
 
     def test_validate_sample(self):
         block = parse_client_block(SAMPLE)
         self.assertEqual(validate_block(block), [])
+
+    def test_back_table_map_has_dates(self):
+        from text_realism import build_back_table_map
+
+        block = parse_client_block(SAMPLE)
+        table = build_back_table_map(block)
+        self.assertEqual(table["B"]["open"], "27.02.2009")
+        self.assertEqual(table["B"]["expiry"], "27.02.2019")
+        self.assertIn("B1", table)
+        self.assertIn("M", table)
 
 
 if __name__ == "__main__":

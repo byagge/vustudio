@@ -1536,18 +1536,35 @@ select {
 }
 
 @media (max-width: 760px) {
-  html, body {
+  .page { min-width: 0; max-width: 100%; }
+  .page-head h1 { font-size: 22px; }
+  .metrics { grid-template-columns: 1fr; }
+  .grid-2 { grid-template-columns: 1fr; }
+  .getstarted { grid-template-columns: 1fr; }
+  .gs-art { display: none; }
+  .head-right .segmented { display: none; }
+  .chips { overflow: visible; }
+  .kv { display: block; }
+  .kv tr, .kv th, .kv td {
+    display: block;
+    width: 100%;
+    padding: 6px 0;
+  }
+  .table { min-width: 0; }
+
+  html:not(.desktop-ui),
+  html:not(.desktop-ui) body {
     overflow: hidden;
     height: 100%;
     height: 100dvh;
   }
-  .layout {
+  html:not(.desktop-ui) .layout {
     min-height: 0;
     height: 100%;
     overflow: hidden;
   }
-  .sidebar { display: none; }
-  .main {
+  html:not(.desktop-ui) .sidebar { display: none; }
+  html:not(.desktop-ui) .main {
     margin-left: 0;
     padding: 16px 16px calc(88px + env(safe-area-inset-bottom, 0px));
     max-width: none;
@@ -1557,8 +1574,7 @@ select {
     -webkit-overflow-scrolling: touch;
     overscroll-behavior: contain;
   }
-  .page { min-width: 0; max-width: 100%; }
-  .page-head {
+  html:not(.desktop-ui) .page-head {
     position: sticky;
     top: 0;
     z-index: 20;
@@ -1566,22 +1582,14 @@ select {
     padding: 4px 0 12px;
     margin: 0 0 12px;
   }
-  .page-head h1 { font-size: 22px; }
-  .metrics { grid-template-columns: 1fr; }
-  .grid-2 { grid-template-columns: 1fr; }
-  .getstarted { grid-template-columns: 1fr; }
-  .gs-art { display: none; }
-  .head-right .segmented { display: none; }
-  .bottom-nav { display: flex; }
-  .jobs-table-wrap { display: none; }
-  .jobs-cards { display: flex; }
-  .chips { overflow: visible; }
-  input, textarea, select { font-size: 16px; }
-  .overlay {
-    padding-top: 0;
-    align-items: stretch;
-  }
-  .modal {
+  html:not(.desktop-ui) .bottom-nav { display: flex; }
+  html:not(.desktop-ui) .jobs-table-wrap { display: none; }
+  html:not(.desktop-ui) .jobs-cards { display: flex; }
+  html:not(.desktop-ui) input,
+  html:not(.desktop-ui) textarea,
+  html:not(.desktop-ui) select { font-size: 16px; }
+  html:not(.desktop-ui) .overlay { padding-top: 0; align-items: stretch; }
+  html:not(.desktop-ui) .modal {
     width: 100%;
     max-width: none;
     height: 100%;
@@ -1589,13 +1597,6 @@ select {
     border-radius: 0;
     border: none;
   }
-  .kv { display: block; }
-  .kv tr, .kv th, .kv td {
-    display: block;
-    width: 100%;
-    padding: 6px 0;
-  }
-  .table { min-width: 0; }
 }
 
 html.app-shell, html.app-shell body {
@@ -1632,4 +1633,38 @@ html.app-shell .modal {
   max-height: none;
   border-radius: 0;
   border: none;
+}
+
+@media (min-width: 761px) {
+  html.app-shell, html.app-shell body {
+    overflow: auto;
+    height: auto;
+  }
+  html.app-shell .layout {
+    min-height: 100vh;
+    height: auto;
+    overflow: visible;
+  }
+  html.app-shell .sidebar { display: flex; }
+  html.app-shell .main {
+    margin-left: var(--sidebar-w);
+    padding: 26px 34px 80px;
+    max-width: 1180px;
+    height: auto;
+    overflow: visible;
+  }
+  html.app-shell .layout.collapsed .main { margin-left: 56px; }
+  html.app-shell .bottom-nav { display: none; }
+  html.app-shell .jobs-table-wrap { display: block; }
+  html.app-shell .jobs-cards { display: none; }
+  html.app-shell .page-head h1 { font-size: 30px; }
+  html.app-shell input, html.app-shell textarea, html.app-shell select { font-size: 14px; }
+  html.app-shell .overlay { padding-top: 12vh; align-items: unset; }
+  html.app-shell .modal {
+    width: min(620px, 94vw);
+    height: max-content;
+    max-height: 74vh;
+    border-radius: var(--r-lg);
+    border: 1px solid var(--line);
+  }
 }

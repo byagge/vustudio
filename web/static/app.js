@@ -55,15 +55,24 @@ const hydrate = (el) => window.Icons && Icons.hydrate(el);
 
 (function bootTelegram() {
   const tg = window.Telegram && window.Telegram.WebApp;
-  if (!tg) return;
+  const platform = String((tg && tg.platform) || "").toLowerCase();
+  const mobileTg = ["ios", "android", "android_x"].includes(platform);
+  const desktopTg = ["tdesktop", "macos", "weba", "webk", "unigram"].includes(platform);
+  const wide = window.matchMedia("(min-width: 761px)").matches;
+  const desktopPointer = window.matchMedia("(hover: hover) and (pointer: fine)").matches;
+  const useMobile = !wide && !desktopPointer && !desktopTg && mobileTg;
+
   try {
-    tg.ready();
-    tg.expand();
-    if (typeof tg.disableVerticalSwipes === "function") tg.disableVerticalSwipes();
-    const platform = String(tg.platform || "").toLowerCase();
-    const mobile = ["ios", "android", "android_x"].includes(platform);
-    if (mobile) document.documentElement.classList.add("app-shell");
+    if (tg) {
+      tg.ready();
+      tg.expand();
+      if (typeof tg.disableVerticalSwipes === "function") tg.disableVerticalSwipes();
+    }
   } catch {}
+
+  const root = document.documentElement;
+  if (useMobile) root.classList.add("app-shell");
+  else if (desktopPointer || desktopTg || wide) root.classList.add("desktop-ui");
 })();
 const esc = (s) =>
   String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));

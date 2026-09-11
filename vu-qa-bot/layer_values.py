@@ -15,6 +15,8 @@ from render_models import RenderOptions, RenderTask, block_to_dict
 from template_loader import load_template
 from text_parser import VuTextBlock, parse_client_block
 from text_realism import (
+    VU_BACK_ROWS,
+    build_back_table_map,
     build_layer_values,
     build_text_group,
     category_visibility,
@@ -93,6 +95,8 @@ def build_render_payload(
         "layers_by_field": layers_by_field,
         "text_group_values": text_values,
         "text_group_visibility": text_visibility,
+        "back_table_map": build_back_table_map(block),
+        "back_table_order": list(VU_BACK_ROWS),
         "category_visibility": category_visibility(block, tpl),
         "template_name": tpl.get("name", "mockup_hand"),
         **scene_fields,

@@ -11,6 +11,12 @@ from text_parser import BackTableRow, VuTextBlock
 DATE_RE = re.compile(r"^\d{2}\.\d{2}\.\d{4}$")
 _CAT_FIELDS = {"cat_a": "A", "cat_b": "B", "cat_b1": "B1", "cat_m": "M"}
 
+# Порядок строк таблицы на обороте пластикового ВУ (2011+).
+VU_BACK_ROWS = (
+    "A", "A1", "B", "B1", "C", "C1", "D", "D1",
+    "BE", "CE", "DE", "Tm", "Tb", "M",
+)
+
 
 def _authority_lat(authority: str) -> str:
     return (
@@ -127,6 +133,21 @@ def build_text_group(block: VuTextBlock, tpl: dict[str, Any]) -> tuple[list[str]
                 visibility.append(False)
 
     return values, visibility
+
+
+def build_back_table_map(block: VuTextBlock) -> dict[str, dict[str, str]]:
+    """Категория → даты для пунктов 10/11 на обороте."""
+    ensure_back_table(block)
+    out: dict[str, dict[str, str]] = {}
+    for cat, row in block.back_table.items():
+        key = str(cat).upper()
+        restr = row.restriction if row.restriction and row.restriction != "—" else ""
+        out[key] = {
+            "open": row.open_date or "",
+            "expiry": row.expiry_date or "",
+            "restriction": restr,
+        }
+    return out
 
 
 def category_visibility(block: VuTextBlock, tpl: dict[str, Any]) -> dict[str, bool]:

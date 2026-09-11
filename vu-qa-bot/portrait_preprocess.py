@@ -45,17 +45,39 @@ def _flatten_cutout(im: Image.Image, paper_gray: tuple[int, int, int] = (228, 22
     return im
 
 
-def _cover_crop(im: Image.Image, target_w: int, target_h: int) -> Image.Image:
-    """Object-fit: cover — как в CSS, для вставки в SO Photo."""
+def _cover_crop(
+    im: Image.Image,
+    target_w: int,
+    target_h: int,
+    *,
+    document: bool = False,
+) -> Image.Image:
+    """Cover-crop в 3×4.
+
+    document=True — кадр как на бланке ВУ: ИИ отдаёт квадрат с лицом в центре,
+    поэтому увеличиваем и срезаем серый «потолок», чтобы макушка была у верха.
+    """
     src_w, src_h = im.size
     if src_w <= 0 or src_h <= 0:
         raise ValueError("Пустое изображение")
-    scale = max(target_w / src_w, target_h / src_h)
+    src_aspect = src_w / src_h
+    zoom = 1.36 if document else 1.08
+    scale = max(target_w / src_w, target_h / src_h) * zoom
     new_w = max(1, int(src_w * scale))
     new_h = max(1, int(src_h * scale))
     im = im.resize((new_w, new_h), Image.Resampling.LANCZOS)
-    left = (new_w - target_w) // 2
-    top = (new_h - target_h) // 2
+    left = max(0, (new_w - target_w) // 2)
+    extra_h = max(0, new_h - target_h)
+    if document and src_aspect >= 0.82:
+        top = int(extra_h * 0.80)
+    elif document:
+        top = int(extra_h * 0.22)
+    else:
+        top = int(extra_h * 0.06)
+    if top + target_h > new_h:
+        top = max(0, new_h - target_h)
+    if left + target_w > new_w:
+        left = max(0, new_w - target_w)
     return im.crop((left, top, left + target_w, top + target_h))
 
 
@@ -105,7 +127,7 @@ def prepare_portrait_file(
         if face_focus:
             # Лицевая зона — верхние ~72% кадра (типичное кадрирование селфи)
             im = im.crop((0, 0, w, max(1, int(h * 0.72))))
-        focus = _cover_crop(im, cfg.width, cfg.height)
+        focus = _cover_crop(im, cfg.width, cfg.height, document=not face_focus)
 
         focus = _match_document_background(focus)
         if face_focus:

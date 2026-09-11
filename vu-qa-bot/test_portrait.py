@@ -44,6 +44,8 @@ class TestPortraitPrompt(unittest.TestCase):
         self.assertIn("man", p.lower())
         self.assertIn("driving-licence", p.lower())
         self.assertIn("document booth", p.lower())
+        self.assertIn("icao", p.lower())
+        self.assertNotIn("face centered", p.lower())
 
     def test_edit_prompt_cutout(self):
         p = build_portrait_edit_prompt({"birth_date": "08.09.1983", "given_ru": "ИВАН ИВАНОВИЧ"})
@@ -113,13 +115,30 @@ class TestPortraitPreprocess(unittest.TestCase):
         self.assertEqual(flat.mode, "RGB")
         self.assertEqual(flat.getpixel((0, 0)), (228, 228, 228))
 
-    def test_ai_frame_keeps_full_height(self):
-        """ИИ-ID фото не режем сверху на 72% — cover всего кадра."""
-        im = Image.new("RGB", (390, 800), (10, 20, 30))
-        # y=600–650 попадает в cover всего кадра и не попадает в selfie-кроп 72%
-        for y in range(600, 650):
-            for x in range(390):
-                im.putpixel((x, y), (200, 10, 10))
+    def test_document_crop_lifts_centered_square(self):
+        """Квадрат ИИ с лицом в центре → в 3×4 голова выше, без серого потолка."""
+        from portrait_preprocess import _cover_crop
+
+        im = Image.new("RGB", (400, 400), (210, 210, 210))
+        for y in range(150, 240):
+            for x in range(140, 260):
+                im.putpixel((x, y), (20, 20, 20))
+        out = _cover_crop(im, 390, 507, document=True)
+        self.assertEqual(out.size, (390, 507))
+        found_y = None
+        for y in range(out.size[1]):
+            if out.getpixel((195, y))[0] < 80:
+                found_y = y
+                break
+        self.assertIsNotNone(found_y)
+        self.assertLess(found_y, 180)
+
+    def test_document_crop_keeps_head_high(self):
+        """После подготовки ИИ-кадра тёмное лицо оказывается в верхней половине."""
+        im = Image.new("RGB", (400, 400), (210, 210, 210))
+        for y in range(150, 240):
+            for x in range(140, 260):
+                im.putpixel((x, y), (20, 20, 20))
         cfg = PortraitSettings(
             openai_api_key=None,
             openai_model="gpt-image-1",
@@ -137,15 +156,17 @@ class TestPortraitPreprocess(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             src = Path(tmp) / "id.jpg"
             dst_ai = Path(tmp) / "ai.jpg"
-            dst_selfie = Path(tmp) / "selfie.jpg"
             im.save(src, format="JPEG")
             prepare_portrait_file(src, dst_ai, settings=cfg, face_focus=False)
-            prepare_portrait_file(src, dst_selfie, settings=cfg, face_focus=True)
-            with Image.open(dst_ai) as a, Image.open(dst_selfie) as s:
+            with Image.open(dst_ai) as a:
                 self.assertEqual(a.size, (390, 507))
-                self.assertEqual(s.size, (390, 507))
-                # полный кадр дотягивает красный низ; selfie-кроп его почти отрезает
-                self.assertGreater(a.getpixel((195, 500))[0], s.getpixel((195, 500))[0])
+                found_y = None
+                for y in range(a.size[1]):
+                    if a.getpixel((195, y))[0] < 80:
+                        found_y = y
+                        break
+                self.assertIsNotNone(found_y)
+                self.assertLess(found_y, 200)
 
 
 class TestPortraitService(unittest.TestCase):

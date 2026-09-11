@@ -191,7 +191,9 @@ class TestTask4Integration(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn("OTRIS_JSX_VERSION", jsx)
-        self.assertIn("2026-09-11.2", jsx)
+        self.assertIn("2026-09-11.3", jsx)
+        self.assertIn("back table dates named=", jsx)
+        self.assertIn("applyBackTableDates", jsx)
         self.assertIn("date-like layers filled", jsx)
         self.assertIn("text-group slots=", jsx)
         self.assertIn("hide group '", jsx)
