@@ -164,6 +164,14 @@ def main() -> int:
                             task.jpg_path = str(p)
                     elif suf in {".psd", ".psb"}:
                         task.psd_path = str(p)
+                if task.jpg_back_path:
+                    try:
+                        from back_jpg_dates import ensure_back_jpg_stamped
+
+                        ok = ensure_back_jpg_stamped(task.jpg_back_path, task.text_block)
+                        log.info("job %s back dates stamp=%s", task.job_id, ok)
+                    except Exception:
+                        log.exception("job %s back dates stamp failed", task.job_id)
                 queue.complete(task)
                 jobs_processed += 1
                 log.info("job %s done in %sms", task.job_id, elapsed_ms)

@@ -383,6 +383,13 @@ def create_app() -> FastAPI:
             raise HTTPException(403, "Path not allowed") from None
         except FileNotFoundError:
             raise HTTPException(404, "File not found") from None
+        if kind == "jpg" and file_path.name.lower().endswith("_back.jpg"):
+            try:
+                from back_jpg_dates import ensure_back_jpg_stamped
+
+                ensure_back_jpg_stamped(file_path)
+            except Exception:
+                pass
         media = "image/jpeg" if kind == "jpg" else "application/octet-stream"
         return FileResponse(file_path, media_type=media, filename=file_path.name)
 

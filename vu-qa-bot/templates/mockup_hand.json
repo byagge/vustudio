@@ -37,6 +37,38 @@
     "residence_lat": "upper"
   },
   "default_restriction": "AS",
+  "back_table_geom": {
+    "col10": 0.610,
+    "col11": 0.790,
+    "col10_left": 0.520,
+    "col10_right": 0.700,
+    "col11_left": 0.700,
+    "col11_right": 0.880,
+    "top": 0.115,
+    "bottom": 0.850,
+    "rows": {
+      "A": 0.088,
+      "A1": 0.1425,
+      "B": 0.197,
+      "B1": 0.2515,
+      "C": 0.306,
+      "C1": 0.3605,
+      "D": 0.415,
+      "D1": 0.4695,
+      "BE": 0.524,
+      "CE": 0.5785,
+      "C1E": 0.633,
+      "DE": 0.6875,
+      "D1E": 0.742,
+      "M": 0.7965,
+      "Tm": 0.851,
+      "Tb": 0.9055
+    }
+  },
+  "back_table_rows": [
+    "A", "A1", "B", "B1", "C", "C1", "D", "D1",
+    "BE", "CE", "C1E", "DE", "D1E", "M", "Tm", "Tb"
+  ],
   "back_table_layout": [
     {"cat": "B", "fields": ["open", "open", "expiry", "expiry"]},
     {"cat": "B1", "fields": ["open", "expiry"]},

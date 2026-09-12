@@ -73,7 +73,7 @@ Mini App «Панель» в боте только если `WEB_BASE_URL` — �
 
 Оборот ищется как слой `Back` и как группа `Text` внутри карточки / wrapper SO. Имя слоя можно поменять в `vu-qa-bot/templates/mockup_hand.json` → `scene.back_smart_objects`.
 
-JSX: `photoshop/render.jsx`, версия `2026-09-11.3`. На VPS копировать этот файл и **перезапустить worker**.
+JSX: `photoshop/render.jsx`, версия `2026-09-12.7`. На VPS копировать этот файл и **перезапустить worker**. Даты 10/11 на обороте рисует Python на JPG (`back_jpg_dates.py`) по найденному бланку — строки B, B1, M по центрам ячеек таблицы.
 
 ## Категории
 

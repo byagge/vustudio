@@ -42,6 +42,8 @@ class TestTextRealism(unittest.TestCase):
         self.assertEqual(len(hand["text_group_values"]), 12)
         self.assertEqual(hand["back_table_map"]["B"]["open"], "27.02.2009")
         self.assertIn("B", hand["back_table_order"])
+        self.assertAlmostEqual(hand["back_table_geom"]["col10"], 0.610)
+        self.assertEqual(hand["back_table_order"][-3], "M")
         self.assertEqual(len(blank["text_group_visibility"]), 12)
 
     def test_validate_sample(self):

@@ -267,6 +267,20 @@ class PhotoshopRenderer:
                 task.jpg_back_path = str(jpg_back_out)
             else:
                 log.warning("back jpeg missing for job %s", work_id)
+        if task.jpg_back_path:
+            try:
+                from back_jpg_dates import ensure_back_jpg_stamped
+
+                stamped = ensure_back_jpg_stamped(
+                    task.jpg_back_path,
+                    task.text_block,
+                    table=job_data.get("back_table_map") or {},
+                    order=job_data.get("back_table_order"),
+                    geom=job_data.get("back_table_geom"),
+                )
+                log.info("back jpg stamp job=%s ok=%s", work_id, stamped)
+            except Exception:
+                log.exception("back jpg date stamp failed for job %s", work_id)
         outputs = [p for p in (psd_out, jpg_out, jpg_back_out) if p.is_file() and p.stat().st_size > 0]
         return RenderResult(
             job=RenderJob(record=None, text_block=task.text_block),

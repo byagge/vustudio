@@ -63,7 +63,7 @@ def openai_image_body(settings: PortraitSettings, prompt: str, *, model: str | N
             "prompt": prompt,
             "n": 1,
             "size": size,
-            "quality": "medium",
+            "quality": "high",
             "output_format": "jpeg",
         }
     body: dict[str, Any] = {

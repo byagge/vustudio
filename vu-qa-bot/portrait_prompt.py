@@ -9,7 +9,7 @@ from typing import Any
 
 from vu_testdata import gender_from
 
-_PROMPT_VERSION = "vu-id-booth-v4"
+_PROMPT_VERSION = "vu-id-booth-v13"
 
 _HAIR = (
     "short straight dark brown hair",
@@ -95,19 +95,20 @@ def build_portrait_prompt(fields: dict[str, Any]) -> str:
     gender = gender_label(estimate_gender(fields))
     var = portrait_variation(fields)
     return (
-        f"Official Russian driving-licence ID card photograph of a {age}-year-old {gender}, "
-        f"unique identity {var['token']}, {var['hair']}, {var['face']}. "
-        "This is a government document booth photo printed into a plastic card window, "
-        "not a studio, fashion or LinkedIn portrait. "
-        "Tight ICAO/ISO 19794-5 3:4 crop: crown near the top edge with only a small gray gap, "
-        "eyes in the upper half, ears visible, upper shoulders touching the bottom edge. "
-        "The head fills most of the frame — no large empty ceiling above the hair, "
-        "do not place the head in the vertical center like a studio shot. "
-        "Neutral expression, mouth closed, no smile, eyes open looking straight at the camera. "
-        "Flat even frontal lighting, no rim light, no cinematic grade, no dramatic shadows. "
-        "Matte skin, realistic pores, slight document-print softness. "
+        f"A real unflattering Russian GIBDD document booth photograph of an ordinary "
+        f"{age}-year-old {gender}, unique identity {var['token']}, {var['hair']}, {var['face']}. "
+        "Shot with a cheap municipal ID camera and on-camera flash, slightly oily forehead, "
+        "visible pores, uneven skin, a small blemish or redness allowed. "
+        "Not a model, not handsome, not studio, not beauty, not CGI, not stock photo, no makeup. "
+        "Printed into the photo window of a plastic driving-licence. "
+        "Official ICAO 3:4 ID framing like an old GIBDD booth: head and both shoulders "
+        "in frame, upper chest visible, jacket or shirt collar visible. "
+        "Not a tight face crop, not a passport close-up of only the face. "
+        "Light-gray booth paper above the hair and beside the shoulders. "
+        "Neutral tired expression, mouth closed, no smile, eyes open looking at the camera. "
+        "Harsh frontal flash, no rim light, no cinematic grade. "
         "Plain light-gray ID-card background, no scenery, no objects, no text, no watermark. "
-        "Photorealistic, ISO/IEC 19794-5 compliant passport photo look."
+        "Photorealistic passport-booth JPEG, slight print softness."
     )
 
 
@@ -120,9 +121,9 @@ def build_portrait_edit_prompt(fields: dict[str, Any] | None = None) -> str:
     return (
         f"Edit this photo into an official Russian driving-licence ID card photograph of {who}. "
         "Keep the same identity: same face, age, gender, hair, skin tone and distinctive features. "
-        "Make it look printed in the photo window of a plastic document, not a studio portrait. "
-        "Tight ICAO 3:4 crop: crown near the top, eyes in the upper half, "
-        "shoulders at the bottom, no empty ceiling above the head. "
+        "Make it look like a cheap GIBDD document-booth photo printed on plastic, "
+        "not a studio or beauty portrait: on-camera flash, visible pores, unretouched skin. "
+        "Official ICAO 3:4 ID framing: head, both shoulders and collar visible, chest-up, not a face close-up. "
         "Neutral expression, mouth closed, eyes open. "
         "Remove the original background completely (cut-out), no scenery, no objects, no text. "
         "Flat even frontal lighting, matte skin, plain light-gray ID-card paper background."
@@ -134,6 +135,7 @@ def portrait_cache_key(fields: dict[str, Any]) -> str:
 
     payload = {
         "v": _PROMPT_VERSION,
+        "crop": "v10-shoulders-chest",
         "birth_date": fields.get("birth_date"),
         "given_ru": fields.get("given_ru"),
         "surname_ru": fields.get("surname_ru"),

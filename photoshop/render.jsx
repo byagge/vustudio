@@ -1,5 +1,5 @@
 #target photoshop
-var OTRIS_JSX_VERSION = "2026-09-11.3";
+var OTRIS_JSX_VERSION = "2026-09-12.7";
 
 (function () {
     if (typeof app === "undefined" || !app.documents) {
@@ -689,9 +689,8 @@ var OTRIS_JSX_VERSION = "2026-09-11.3";
                 }
             }
         }
-        if (job && job._keepTextVisible) {
+        if (job && job._keepTextVisible && !job._stampDates) {
             fillDateLikeLayers(doc, values, visibility);
-            applyBackTableDates(doc, job);
         }
     }
 
@@ -709,7 +708,7 @@ var OTRIS_JSX_VERSION = "2026-09-11.3";
 
     function isFillableDateCell(layer) {
         var t = layerTextContents(layer).replace(/\s+/g, "");
-        if (!t || t === "—" || t === "-" || t === "." || t === "…" || t === "–") {
+        if (/^[дdмmгgyYxXхХ0]{1,2}[.\-\/][дdмmгgyYxXхХ0]{1,2}[.\-\/][дdмmгgyYxXхХ0]{2,4}$/i.test(t)) {
             return true;
         }
         if (/^\d{2}[.\-]\d{2}[.\-]\d{4}$/.test(t)) {
@@ -718,18 +717,286 @@ var OTRIS_JSX_VERSION = "2026-09-11.3";
         if (/^[0xXхХ.·\-—_]{4,}$/.test(t)) {
             return true;
         }
+        if (t === "—" || t === "-" || t === "…" || t === "–") {
+            return true;
+        }
         return isDateLikeLayer(layer);
     }
 
+    function isLandscapeCardDoc(doc) {
+        try {
+            var a = doc.width.as("px") / doc.height.as("px");
+            return a > 1.32 && a < 1.9;
+        } catch (e) {
+            return false;
+        }
+    }
+
     function applyBackTableDates(doc, job) {
-        var table = (job && job.back_table_map) || {};
+        if (!(job && job._stampDates)) {
+            writeLog(null, "back table skip: not in Back SO '" + docName(doc) + "'");
+            return;
+        }
+        if (!isLandscapeCardDoc(doc)) {
+            writeLog(null, "back table skip: not card-sized '" + docName(doc) + "'");
+            return;
+        }
+        var table = resolveBackTable(job) || {};
         var order = (job && job.back_table_order) || [
             "A", "A1", "B", "B1", "C", "C1", "D", "D1",
             "BE", "CE", "DE", "Tm", "Tb", "M"
         ];
-        var named = fillBackByCategoryName(doc, table);
-        var grid = fillBackByGrid(doc, table, order);
-        writeLog(null, "back table dates named=" + named + " grid=" + grid + " in '" + docName(doc) + "'");
+        var stampKey = "backDates:" + docName(doc);
+        if (job._stampedDocs && job._stampedDocs[stampKey]) {
+            writeLog(null, "back table dates already stamped in '" + docName(doc) + "'");
+            return;
+        }
+        logBackTextDump(doc);
+        var stamped = stampBackTableDates(doc, job, table, order);
+        job._stampedDocs = job._stampedDocs || {};
+        job._stampedDocs[stampKey] = true;
+        writeLog(
+            null,
+            "back table dates named=0 grid=0 stamped=" + stamped +
+                " pt=" + ((job && job._lastStampPt) || "?") +
+                " in '" + docName(doc) + "'"
+        );
+    }
+
+    function logBackTextDump(doc) {
+        var layers = [];
+        collectTextLayers(doc, layers, false);
+        writeLog(null, "back text dump n=" + layers.length + " '" + docName(doc) + "'");
+        var i;
+        var n = layers.length > 50 ? 50 : layers.length;
+        for (i = 0; i < n; i++) {
+            var m = layerMid(layers[i]);
+            var nm = "";
+            try {
+                nm = String(layers[i].name || "");
+            } catch (eN) {}
+            var t = layerTextContents(layers[i]).replace(/\s+/g, " ").slice(0, 36);
+            writeLog(null, "  T '" + nm + "' '" + t + "' x=" + Math.round(m.x) + " y=" + Math.round(m.y));
+        }
+    }
+
+    var BACK_ROW_INDEX = {
+        A: 0, A1: 1, B: 2, B1: 3, C: 4, C1: 5, D: 6, D1: 7,
+        BE: 8, CE: 9, C1E: 10, DE: 11, D1E: 12, M: 13, Tm: 14, Tb: 15
+    };
+    var BACK_ROW_FRAC = {
+        A: 0.088, A1: 0.1425, B: 0.197, B1: 0.2515,
+        C: 0.306, C1: 0.3605, D: 0.415, D1: 0.4695,
+        BE: 0.524, CE: 0.5785, C1E: 0.633, DE: 0.6875,
+        D1E: 0.742, M: 0.7965, Tm: 0.851, Tb: 0.9055
+    };
+
+    function tableRowY(box, job, cat) {
+        var key = String(cat || "").toUpperCase();
+        var frac = backRowFrac(job, key, BACK_ROW_FRAC[key] || 0.249);
+        return box.y + box.h * frac;
+    }
+
+    function backRowFrac(job, cat, fallback) {
+        var rows = (job && job.back_table_geom && job.back_table_geom.rows) || BACK_ROW_FRAC;
+        var key = String(cat || "").toUpperCase();
+        if (rows[cat] != null) {
+            return Number(rows[cat]);
+        }
+        if (rows[key] != null) {
+            return Number(rows[key]);
+        }
+        if (BACK_ROW_FRAC[key] != null) {
+            return BACK_ROW_FRAC[key];
+        }
+        return fallback;
+    }
+
+    function backTableGeom(doc, job) {
+        var g = (job && job.back_table_geom) || {};
+        var W = doc.width.as("px");
+        var H = doc.height.as("px");
+        return {
+            w: W,
+            h: H,
+            col10: (g.col10 || 0.610) * W,
+            col11: (g.col11 || 0.790) * W,
+            top: (g.top || 0.115) * H,
+            bottom: (g.bottom || 0.850) * H
+        };
+    }
+
+    function stampBackTableDates(doc, job, table, order) {
+        var geom = backTableGeom(doc, job);
+        if (geom.w <= 0 || geom.h <= 0) {
+            return 0;
+        }
+        var rowH = geom.h * 0.0545;
+        var style = backDateTextStyle(doc, geom, rowH);
+        if (job) {
+            job._lastStampPt = style.sizePt;
+        }
+        writeLog(null, "stamp style pt=" + style.sizePt + " card=" + Math.round(geom.w) + "x" + Math.round(geom.h));
+        var n = 0;
+        var cats = order && order.length ? order : ["B", "B1", "M"];
+        var i;
+        for (i = 0; i < cats.length; i++) {
+            var cat = cats[i];
+            var data = table[cat];
+            if (!data || !data.open) {
+                continue;
+            }
+            var y = tableRowY({y: 0, h: geom.h}, job, cat);
+            n += placeBackDate(doc, data.open, geom.col10, y, style, "vu_10_" + cat);
+            if (data.expiry) {
+                n += placeBackDate(doc, data.expiry, geom.col11, y, style, "vu_11_" + cat);
+            }
+        }
+        return n;
+    }
+
+    function layerWidth(layer) {
+        try {
+            var b = layer.bounds;
+            return Math.abs(b[2].as("px") - b[0].as("px"));
+        } catch (e) {
+            return 0;
+        }
+    }
+
+    function isStampDateLayer(layer) {
+        var nm = "";
+        try {
+            nm = String(layer.name || "");
+        } catch (e) {}
+        return /^vu_1[01]_/i.test(nm);
+    }
+
+    function placeBackDate(doc, text, x, y, style, layerName) {
+        if (createBackDateLayer(doc, text, x, y, style, layerName)) {
+            return 1;
+        }
+        return 0;
+    }
+
+    function findLayerNear(layers, x, y, maxDx, maxDy) {
+        var best = null;
+        var bestD = 1e12;
+        var i;
+        for (i = 0; i < layers.length; i++) {
+            var m = layerMid(layers[i]);
+            var dx = Math.abs(m.x - x);
+            var dy = Math.abs(m.y - y);
+            if (dx > maxDx || dy > maxDy) {
+                continue;
+            }
+            var d = dx + dy * 1.4;
+            if (d < bestD) {
+                bestD = d;
+                best = layers[i];
+            }
+        }
+        return best;
+    }
+
+    function backDateTextStyle(doc, geom, rowH) {
+        var ppi = 72;
+        try {
+            ppi = Number(doc.resolution) || 72;
+        } catch (eR) {}
+        if (ppi < 36) {
+            ppi = 72;
+        }
+        // ~62% высоты строки таблицы — как печать в графах 10/11
+        var sizePx = rowH > 0 ? rowH * 0.62 : geom.h * 0.033;
+        if (sizePx < 8) {
+            sizePx = 8;
+        }
+        if (rowH > 0 && sizePx > rowH * 0.78) {
+            sizePx = rowH * 0.78;
+        }
+        var sizePt = sizePx * 72 / ppi;
+        return {
+            sizePt: sizePt,
+            font: "ArialMT",
+            color: null
+        };
+    }
+
+    function createBackDateLayer(doc, text, xPx, yPx, style, layerName) {
+        try {
+            app.activeDocument = doc;
+        } catch (eAct) {}
+        var group = null;
+        var groups = [];
+        findGroupsNamed(doc, "Text", groups);
+        if (groups.length) {
+            group = groups[0];
+            try {
+                group.visible = true;
+                doc.activeLayer = group;
+            } catch (eG) {}
+        }
+        var layer;
+        try {
+            layer = doc.artLayers.add();
+        } catch (eAdd) {
+            writeLog(null, "stamp date add failed: " + eAdd);
+            return false;
+        }
+        try {
+            layer.kind = LayerKind.TEXT;
+        } catch (eKind) {}
+        try {
+            layer.name = layerName || "vu_date";
+        } catch (eNm) {}
+        try {
+            var ti = layer.textItem;
+            ti.kind = TextType.POINTTEXT;
+            ti.contents = String(text);
+            try {
+                ti.font = style.font || "ArialMT";
+            } catch (eF) {
+                try {
+                    ti.font = "ArialMT";
+                } catch (eF2) {}
+            }
+            try {
+                ti.size = style.sizePt || 5;
+            } catch (eSz) {}
+            try {
+                ti.justification = Justification.CENTER;
+            } catch (eJ) {}
+            try {
+                if (style.color) {
+                    ti.color = style.color;
+                } else {
+                    var c = new SolidColor();
+                    c.rgb.red = 28;
+                    c.rgb.green = 28;
+                    c.rgb.blue = 32;
+                    ti.color = c;
+                }
+            } catch (eCol) {}
+            ti.position = [new UnitValue(xPx, "px"), new UnitValue(yPx, "px")];
+        } catch (eTxt) {
+            writeLog(null, "stamp date text failed: " + eTxt);
+            try {
+                layer.remove();
+            } catch (eRm) {}
+            return false;
+        }
+        if (group) {
+            try {
+                layer.move(group, ElementPlacement.INSIDE);
+            } catch (eMv) {
+                try {
+                    layer.move(group, ElementPlacement.PLACEATBEGINNING);
+                } catch (eMv2) {}
+            }
+        }
+        writeLog(null, "stamp date '" + layerName + "' = " + text + " @ " + Math.round(xPx) + "," + Math.round(yPx));
+        return true;
     }
 
     function fillBackByCategoryName(doc, table) {
@@ -791,7 +1058,11 @@ var OTRIS_JSX_VERSION = "2026-09-11.3";
         }
         var cells = [];
         var i;
+        var minX = doc.width.as("px") * 0.42;
         for (i = 0; i < layers.length; i++) {
+            if (layerMid(layers[i]).x < minX) {
+                continue;
+            }
             if (isFillableDateCell(layers[i])) {
                 cells.push(layers[i]);
             }
@@ -1567,7 +1838,25 @@ var OTRIS_JSX_VERSION = "2026-09-11.3";
         } catch (e) {}
     }
 
-    function placeImageInDoc(doc, imagePath) {
+    function scaleActiveLayerFit(doc) {
+        var layer = doc.activeLayer;
+        var b = layer.bounds;
+        var w = b[2].as("px") - b[0].as("px");
+        var h = b[3].as("px") - b[1].as("px");
+        var cw = doc.width.as("px");
+        var ch = doc.height.as("px");
+        if (w <= 0 || h <= 0) {
+            return;
+        }
+        var scale = Math.min(cw / w, ch / h) * 100;
+        layer.resize(scale, scale, AnchorPosition.MIDDLECENTER);
+        b = layer.bounds;
+        var cx = (b[0].as("px") + b[2].as("px")) / 2;
+        var cy = (b[1].as("px") + b[3].as("px")) / 2;
+        layer.translate(cw / 2 - cx, ch / 2 - cy);
+    }
+
+    function placeImageInDoc(doc, imagePath, fit) {
         var file = new File(imagePath);
         if (!file.exists) {
             return;
@@ -1592,7 +1881,11 @@ var OTRIS_JSX_VERSION = "2026-09-11.3";
                 return;
             }
         }
-        scaleLayerToCanvas(doc);
+        if (fit) {
+            scaleActiveLayerFit(doc);
+        } else {
+            scaleLayerToCanvas(doc);
+        }
     }
 
     function scaleActiveLayerCover(doc) {
@@ -1606,11 +1899,63 @@ var OTRIS_JSX_VERSION = "2026-09-11.3";
             return;
         }
         var scale = Math.max(cw / w, ch / h) * 100;
-        layer.resize(scale, scale, AnchorPosition.TOPCENTER);
+        layer.resize(scale, scale, AnchorPosition.MIDDLECENTER);
         b = layer.bounds;
         var cx = (b[0].as("px") + b[2].as("px")) / 2;
-        var top = b[1].as("px");
-        layer.translate(cw / 2 - cx, -top);
+        var cy = (b[1].as("px") + b[3].as("px")) / 2;
+        layer.translate(cw / 2 - cx, ch / 2 - cy);
+    }
+
+    function fillDocPaperGray(doc) {
+        var c = new SolidColor();
+        c.rgb.red = 228;
+        c.rgb.green = 228;
+        c.rgb.blue = 228;
+        try {
+            app.activeDocument = doc;
+        } catch (eAct) {}
+        try {
+            if (doc.backgroundLayer) {
+                doc.activeLayer = doc.backgroundLayer;
+                doc.selection.selectAll();
+                doc.selection.fill(c, ColorBlendMode.NORMAL, 100, false);
+                doc.selection.deselect();
+            }
+        } catch (eBg) {}
+        var paper = null;
+        try {
+            paper = doc.artLayers.add();
+            paper.name = "vu_photo_paper";
+            doc.selection.selectAll();
+            doc.selection.fill(c, ColorBlendMode.NORMAL, 100, false);
+            doc.selection.deselect();
+            try {
+                paper.move(doc.layers[doc.layers.length - 1], ElementPlacement.PLACEAFTER);
+            } catch (eMv) {}
+        } catch (eAdd) {
+            writeLog(null, "photo paper fill failed: " + eAdd);
+        }
+        return paper;
+    }
+
+    function keepPortraitLayer(layer, photo, paper) {
+        if (!layer) {
+            return false;
+        }
+        if (layer === photo || layer === paper) {
+            return true;
+        }
+        try {
+            if (String(layer.name || "") === "vu_photo_paper") {
+                return true;
+            }
+        } catch (eN) {}
+        try {
+            if (layer.isBackgroundLayer) {
+                return true;
+            }
+        } catch (eB) {}
+        return false;
     }
 
     function convertLayerToSmartObject(layer) {
@@ -1651,17 +1996,36 @@ var OTRIS_JSX_VERSION = "2026-09-11.3";
         } catch (eAct) {}
         var placed = false;
         editSmartObject(layer, function (innerDoc) {
+            writeLog(
+                null,
+                "photo SO canvas " +
+                    Math.round(innerDoc.width.as("px")) + "x" +
+                    Math.round(innerDoc.height.as("px"))
+            );
+            var paper = fillDocPaperGray(innerDoc);
             var before = innerDoc.layers.length;
-            placeImageInDoc(innerDoc, imagePath);
+            placeImageInDoc(innerDoc, imagePath, true);
             if (innerDoc.layers.length <= before) {
                 writeLog(null, "portrait place failed: " + imagePath);
                 return;
             }
-            scaleActiveLayerCover(innerDoc);
+            scaleActiveLayerFit(innerDoc);
             try {
-                while (innerDoc.layers.length > 1) {
-                    innerDoc.layers[innerDoc.layers.length - 1].remove();
+                var photo = innerDoc.activeLayer;
+                var i;
+                for (i = innerDoc.layers.length - 1; i >= 0; i--) {
+                    var L = innerDoc.layers[i];
+                    if (keepPortraitLayer(L, photo, paper)) {
+                        continue;
+                    }
+                    try {
+                        L.remove();
+                    } catch (e1) {}
                 }
+                try {
+                    innerDoc.activeLayer = photo;
+                    photo.merge();
+                } catch (eMg) {}
             } catch (eRm) {}
             placed = true;
         }, true);
@@ -2025,8 +2389,10 @@ var OTRIS_JSX_VERSION = "2026-09-11.3";
                             job._editedSO[lid] = true;
                             writeLog(null, "edit card SO in place: " + layer.name);
                             var prevKeep = job._keepTextVisible;
+                            var prevStamp = job._stampDates;
                             if (isBackCardName(cardName)) {
                                 job._keepTextVisible = true;
+                                job._stampDates = true;
                             }
                             editSmartObject(layer, function (innerDoc) {
                                 applyTextMaps(
@@ -2038,9 +2404,11 @@ var OTRIS_JSX_VERSION = "2026-09-11.3";
                                     job,
                                     job.text_replacements
                                 );
+                                job._stampDates = false;
                                 walkLayers(innerDoc.layers, job, depth + 1);
                             }, true);
                             job._keepTextVisible = prevKeep;
+                            job._stampDates = prevStamp;
                             if (isBackCardName(cardName)) {
                                 try {
                                     layer.visible = false;
@@ -2097,7 +2465,7 @@ var OTRIS_JSX_VERSION = "2026-09-11.3";
             writeLog(null, "updateTextGroupByIndex: " + eGrp);
         }
         try {
-            if (job && job._keepTextVisible) {
+            if (job && job._stampDates) {
                 applyBackTableDates(doc, job);
             }
         } catch (eBackTbl) {
@@ -2442,6 +2810,309 @@ var OTRIS_JSX_VERSION = "2026-09-11.3";
         return n;
     }
 
+    function layerBox(layer) {
+        try {
+            var b = layer.bounds;
+            var x = b[0].as("px");
+            var y = b[1].as("px");
+            return {
+                x: x,
+                y: y,
+                w: b[2].as("px") - x,
+                h: b[3].as("px") - y,
+                name: String(layer.name || "")
+            };
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function inferCardFromTallBox(box) {
+        if (!box || box.w < 120 || box.h < 80) {
+            return null;
+        }
+        var w = box.w * 0.94;
+        var h = w / 1.585;
+        if (h > box.h * 0.72) {
+            h = box.h * 0.58;
+            w = h * 1.585;
+        }
+        return {
+            x: box.x + (box.w - w) / 2,
+            y: box.y + box.h - h - box.h * 0.03,
+            w: w,
+            h: h,
+            name: "inferred:" + box.name
+        };
+    }
+
+    function findVisibleCardBounds(doc, job) {
+        var docW = doc.width.as("px");
+        var docH = doc.height.as("px");
+        var docA = docW * docH;
+        var names = cardSideNames(job, "back");
+        var best = null;
+        var bestScore = 1e12;
+        var tall = null;
+        var tallA = 0;
+
+        function considerBox(box, namedBack) {
+            if (!box || box.w < 100 || box.h < 60) {
+                return;
+            }
+            var area = box.w * box.h;
+            var areaFrac = area / docA;
+            var aspect = box.w / box.h;
+            if (areaFrac > 0.08 && areaFrac < 0.55 && area > tallA) {
+                tall = box;
+                tallA = area;
+            }
+            if (areaFrac > 0.42 || areaFrac < 0.035) {
+                return;
+            }
+            if (aspect < 1.28 || aspect > 1.95) {
+                return;
+            }
+            var s = Math.abs(aspect - 1.585) * 8 + areaFrac;
+            if (namedBack) {
+                s -= 0.4;
+            }
+            writeLog(
+                null,
+                "card cand '" + box.name + "' " + Math.round(box.w) + "x" + Math.round(box.h) +
+                    " a=" + Math.round(aspect * 100) / 100 + " frac=" + Math.round(areaFrac * 100) / 100
+            );
+            if (s < bestScore) {
+                bestScore = s;
+                best = box;
+            }
+        }
+
+        function walk(layers) {
+            var i;
+            for (i = 0; i < layers.length; i++) {
+                var layer = layers[i];
+                if (!isVisible(layer)) {
+                    continue;
+                }
+                var n = "";
+                try {
+                    n = String(layer.name);
+                } catch (eN) {}
+                var named = nameInList(n, names) || isBackCardName(n);
+                var box = layerBox(layer);
+                if (layer.typename === "ArtLayer") {
+                    considerBox(box, named);
+                } else if (layer.typename === "LayerSet") {
+                    if (named) {
+                        considerBox(box, true);
+                    }
+                    try {
+                        walk(layer.layers);
+                    } catch (eG) {}
+                }
+            }
+        }
+        try {
+            walk(doc.layers);
+        } catch (eW) {}
+        if (!best && tall) {
+            best = inferCardFromTallBox(tall);
+            writeLog(null, "card inferred from '" + tall.name + "'");
+        }
+        return best;
+    }
+
+    function fallbackHandCardBox(doc) {
+        var W = doc.width.as("px");
+        var H = doc.height.as("px");
+        var w = W * 0.50;
+        var h = w / 1.585;
+        if (h > H * 0.36) {
+            h = H * 0.30;
+            w = h * 1.585;
+        }
+        return {
+            x: (W - w) / 2,
+            y: H * 0.275,
+            w: w,
+            h: h,
+            name: "fallback-hand"
+        };
+    }
+
+    function pickJobDates(job) {
+        var f = (job && job.fields) || {};
+        var lf = (job && job.layers_by_field) || {};
+        return {
+            open: String(f.issue_date || lf.issue_date || ""),
+            expiry: String(f.expiry_date || lf.expiry_date || "")
+        };
+    }
+
+    function resolveBackTable(job) {
+        var table = {};
+        var src = (job && job.back_table_map) || {};
+        if (!src || !src.B) {
+            if (job && job.fields && job.fields.back_table) {
+                src = job.fields.back_table;
+            }
+        }
+        var cat;
+        for (cat in src) {
+            var row = src[cat];
+            if (row && row.open) {
+                table[String(cat)] = {
+                    open: String(row.open),
+                    expiry: String(row.expiry || "")
+                };
+            }
+        }
+        var has = false;
+        for (cat in table) {
+            has = true;
+            break;
+        }
+        if (has) {
+            return table;
+        }
+        var d = pickJobDates(job);
+        if (!d.open) {
+            writeLog(null, "scene dates: no 4a/4b in job");
+            return null;
+        }
+        var cats = (job && job.fields && job.fields.categories) || ["B", "B1", "M"];
+        if (!cats.length) {
+            cats = ["B", "B1", "M"];
+        }
+        var i;
+        for (i = 0; i < cats.length; i++) {
+            table[String(cats[i]).toUpperCase()] = {open: d.open, expiry: d.expiry};
+        }
+        writeLog(null, "scene dates from 4a/4b " + d.open);
+        return table;
+    }
+
+    function overlaySceneBackDates(doc, job) {
+        var created = [];
+        var table = resolveBackTable(job);
+        if (!table) {
+            writeLog(null, "scene dates: no table");
+            return created;
+        }
+        try {
+            app.activeDocument = doc;
+        } catch (eAct) {}
+        var box = findVisibleCardBounds(doc, job);
+        if (box && box.w / box.h < 1.35) {
+            var inferred = inferCardFromTallBox(box);
+            if (inferred) {
+                box = inferred;
+            }
+        }
+        if (!box) {
+            box = fallbackHandCardBox(doc);
+            writeLog(null, "scene dates: using fallback card box");
+        }
+        writeLog(
+            null,
+            "scene dates card " + Math.round(box.w) + "x" + Math.round(box.h) +
+                " @ " + Math.round(box.x) + "," + Math.round(box.y)
+        );
+        var g = (job && job.back_table_geom) || {};
+        var col10 = box.x + (g.col10 || 0.610) * box.w;
+        var col11 = box.x + (g.col11 || 0.790) * box.w;
+        var ppi = 72;
+        try {
+            ppi = Number(doc.resolution) || 72;
+        } catch (eR) {}
+        if (ppi < 36) {
+            ppi = 72;
+        }
+        var rowH = box.h * 0.0545;
+        var sizePt = (rowH * 0.62) * 72 / ppi;
+        if (sizePt < 6) {
+            sizePt = 6;
+        }
+        var only = {B: 1, B1: 1, M: 1};
+        var cat;
+        for (cat in table) {
+            if (!only[String(cat).toUpperCase()]) {
+                continue;
+            }
+            var data = table[cat];
+            if (!data || !data.open) {
+                continue;
+            }
+            var y = tableRowY(box, job, cat);
+            var a = createSceneDateLayer(doc, data.open, col10, y, sizePt, "vu_sc_10_" + cat);
+            if (a) {
+                created.push(a);
+            }
+            if (data.expiry) {
+                var b = createSceneDateLayer(doc, data.expiry, col11, y, sizePt, "vu_sc_11_" + cat);
+                if (b) {
+                    created.push(b);
+                }
+            }
+        }
+        writeLog(null, "scene dates overlaid=" + created.length + " pt=" + sizePt);
+        return created;
+    }
+
+    function createSceneDateLayer(doc, text, xPx, yPx, sizePt, layerName) {
+        try {
+            app.activeDocument = doc;
+            try {
+                doc.activeLayer = doc.layers[0];
+            } catch (eTop) {}
+            var layer = doc.artLayers.add();
+            try {
+                layer.kind = LayerKind.TEXT;
+            } catch (eK) {}
+            try {
+                layer.name = layerName || "vu_sc_date";
+            } catch (eN) {}
+            var ti = layer.textItem;
+            ti.kind = TextType.POINTTEXT;
+            ti.contents = String(text);
+            try {
+                ti.font = "ArialMT";
+            } catch (eF) {}
+            try {
+                ti.size = sizePt;
+            } catch (eS) {}
+            try {
+                ti.justification = Justification.CENTER;
+            } catch (eJ) {}
+            try {
+                var c = new SolidColor();
+                c.rgb.red = 22;
+                c.rgb.green = 22;
+                c.rgb.blue = 26;
+                ti.color = c;
+            } catch (eC) {}
+            ti.position = [new UnitValue(xPx, "px"), new UnitValue(yPx, "px")];
+            writeLog(null, "scene date '" + layerName + "' = " + text + " @ " + Math.round(xPx) + "," + Math.round(yPx));
+            return layer;
+        } catch (e) {
+            writeLog(null, "scene date add failed: " + e);
+            return null;
+        }
+    }
+
+    function removeOverlayLayers(layers) {
+        if (!layers) {
+            return;
+        }
+        var i;
+        for (i = 0; i < layers.length; i++) {
+            try {
+                layers[i].remove();
+            } catch (eRm) {}
+        }
+    }
+
     function exportBackJpeg(workName, job, jpgBack) {
         if (!jpgBack) {
             writeLog(null, "back jpeg: no output path");
@@ -2460,6 +3131,13 @@ var OTRIS_JSX_VERSION = "2026-09-11.3";
         if (!flipped) {
             writeLog(null, "back jpeg: no Back layer at top, tried card SO / Text");
         }
+        var overlays = [];
+        try {
+            overlays = overlaySceneBackDates(app.activeDocument, job);
+        } catch (eOv) {
+            writeLog(null, "scene dates overlay: " + eOv);
+            overlays = [];
+        }
         try {
             exportJpeg(workName, jpgBack);
             var ok = fileReady(jpgBack);
@@ -2471,6 +3149,7 @@ var OTRIS_JSX_VERSION = "2026-09-11.3";
             writeLog(null, "back jpeg failed: " + eBack);
             return false;
         } finally {
+            removeOverlayLayers(overlays);
             try {
                 if (activateByName(workName)) {
                     showCardSide(app.activeDocument, job, "front", 0);
@@ -2612,9 +3291,11 @@ var OTRIS_JSX_VERSION = "2026-09-11.3";
                     if (isCardSmartObject(layer, job)) {
                         writeLog(null, "export-edit card SO: " + layer.name);
                         var prevKeep = job._keepTextVisible;
+                        var prevStamp = job._stampDates;
                         try {
                             if (isBackCardName(layer.name)) {
                                 job._keepTextVisible = true;
+                                job._stampDates = true;
                             }
                         } catch (eBn) {}
                         if (editSmartObjectViaExport(layer, function (innerDoc) {
@@ -2632,6 +3313,7 @@ var OTRIS_JSX_VERSION = "2026-09-11.3";
                             job._cardEdited = (job._cardEdited || 0) + 1;
                         }
                         job._keepTextVisible = prevKeep;
+                        job._stampDates = prevStamp;
                     } else if (isWrapperSmartObject(layer, job)) {
                         writeLog(null, "export-edit via wrapper: " + layer.name);
                         editSmartObject(layer, function (innerDoc) {
