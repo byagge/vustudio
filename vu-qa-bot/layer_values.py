@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +26,19 @@ from text_realism import (
 
 # Алиас из task2.md §3 (layer_values.field_values)
 field_values = build_layer_values
+
+
+def _blank_text_group_dates(values: list[str], visibility: list[bool]) -> tuple[list[str], list[bool]]:
+    """Для мокапа рука: даты 10/11 ставит JSX в Back SO, text-group не дублирует."""
+    out_v = list(values)
+    out_vis = list(visibility)
+    date_re = re.compile(r"^\d{2}\.\d{2}\.\d{4}$")
+    for i, val in enumerate(out_v):
+        if date_re.match(str(val or "").strip()):
+            out_v[i] = ""
+            if i < len(out_vis):
+                out_vis[i] = False
+    return out_v, out_vis
 
 
 def layers_by_name_for_template(block: VuTextBlock, tpl: dict) -> dict[str, str]:
@@ -90,6 +104,14 @@ def build_render_payload(
     scene_fields = build_scene_job_fields(opts, tpl)
     font_fields = build_font_job_fields(tpl)
 
+    # Рука/оригинал: даты 10/11 на JPG рисует Python (сетка бланка).
+    # text-group даты очищаем, чтобы Back SO не дублировал/не ставил мимо строк.
+    back_jpg_draw = True
+    tpl_name = str(tpl.get("name") or "")
+    if scene_fields.get("mockup_variant") in ("hand", "original") and "hand" in tpl_name:
+        text_values, text_visibility = _blank_text_group_dates(text_values, text_visibility)
+        back_jpg_draw = True
+
     return {
         "layers_by_name": layers_by_name,
         "layers_by_field": layers_by_field,
@@ -98,6 +120,7 @@ def build_render_payload(
         "back_table_map": build_back_table_map(block),
         "back_table_order": list(tpl.get("back_table_rows") or VU_BACK_ROWS),
         "back_table_geom": tpl.get("back_table_geom") or {},
+        "back_jpg_draw_dates": back_jpg_draw,
         "category_visibility": category_visibility(block, tpl),
         "template_name": tpl.get("name", "mockup_hand"),
         **scene_fields,

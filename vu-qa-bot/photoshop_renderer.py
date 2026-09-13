@@ -277,6 +277,7 @@ class PhotoshopRenderer:
                     table=job_data.get("back_table_map") or {},
                     order=job_data.get("back_table_order"),
                     geom=job_data.get("back_table_geom"),
+                    draw_dates=job_data.get("back_jpg_draw_dates"),
                 )
                 log.info("back jpg stamp job=%s ok=%s", work_id, stamped)
             except Exception:

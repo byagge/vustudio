@@ -169,7 +169,13 @@ class OpenAIGenerator(PortraitGenerator):
         url = "https://api.openai.com/v1/images/generations"
         last_err = "OpenAI: пустой ответ"
         for i, body in enumerate(bodies):
-            log.info("OpenAI portrait POST %s model=%s attempt=%s", url, body.get("model"), i + 1)
+            log.info(
+                "OpenAI portrait POST %s model=%s attempt=%s timeout=%ss (ожидайте, не кликайте консоль)",
+                url,
+                body.get("model"),
+                i + 1,
+                self.settings.timeout_sec,
+            )
             req = urllib.request.Request(
                 url,
                 data=json.dumps(body).encode("utf-8"),
@@ -183,6 +189,13 @@ class OpenAIGenerator(PortraitGenerator):
                 with urllib.request.urlopen(req, timeout=self.settings.timeout_sec) as resp:
                     payload = json.loads(resp.read().decode("utf-8"))
                 _write_openai_image(payload["data"][0], out_path, self.settings.timeout_sec)
+                if not out_path.is_file() or out_path.stat().st_size < 100:
+                    return GenerationResult(
+                        ok=False,
+                        provider="openai",
+                        message="OpenAI: пустой файл изображения",
+                    )
+                log.info("OpenAI portrait OK bytes=%s -> %s", out_path.stat().st_size, out_path.name)
                 return GenerationResult(ok=True, raw_path=out_path, provider="openai")
             except urllib.error.HTTPError as e:
                 err = e.read().decode("utf-8", errors="replace")[:500]

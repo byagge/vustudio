@@ -1,4 +1,5 @@
 @echo off
 cd /d "%~dp0.."
-.venv\Scripts\python.exe vu-qa-bot\render_worker.py
+set PYTHONUNBUFFERED=1
+.venv\Scripts\python.exe -u vu-qa-bot\render_worker.py
 pause

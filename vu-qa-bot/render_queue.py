@@ -12,6 +12,11 @@ from render_models import JobStatus, RenderTask
 from render_models import _now
 
 
+def _read_json(path: Path) -> dict:
+    """utf-8-sig: PowerShell Set-Content -Encoding UTF8 пишет BOM и ломает json.loads."""
+    return json.loads(path.read_text(encoding="utf-8-sig"))
+
+
 class RenderQueue:
     def __init__(self, root: Path):
         self.root = root
@@ -28,8 +33,8 @@ class RenderQueue:
         pending = sorted((self.root / "pending").glob("*.json"), key=lambda p: p.stat().st_mtime)
         for path in pending:
             try:
-                task = RenderTask.from_dict(json.loads(path.read_text(encoding="utf-8")))
-            except (json.JSONDecodeError, KeyError):
+                task = RenderTask.from_dict(_read_json(path))
+            except (json.JSONDecodeError, KeyError, OSError, TypeError, ValueError):
                 path.unlink(missing_ok=True)
                 continue
             proc = self.root / "processing" / f"{task.job_id}.json"
@@ -61,7 +66,10 @@ class RenderQueue:
         for folder in ("pending", "processing", "done", "failed"):
             path = self.root / folder / f"{job_id}.json"
             if path.is_file():
-                return RenderTask.from_dict(json.loads(path.read_text(encoding="utf-8")))
+                try:
+                    return RenderTask.from_dict(_read_json(path))
+                except (json.JSONDecodeError, KeyError, OSError, TypeError, ValueError):
+                    return None
         return None
 
     def requeue(self, task: RenderTask) -> None:
@@ -97,8 +105,8 @@ class RenderQueue:
         for folder in folders:
             for path in (self.root / folder).glob("*.json"):
                 try:
-                    data = json.loads(path.read_text(encoding="utf-8"))
-                except (json.JSONDecodeError, OSError):
+                    data = _read_json(path)
+                except (json.JSONDecodeError, OSError, TypeError, ValueError):
                     continue
                 opts = data.get("options") or {}
                 fields = data.get("fields") or {}
@@ -135,8 +143,8 @@ class RenderQueue:
             if path.stat().st_mtime > cutoff:
                 continue
             try:
-                task = RenderTask.from_dict(json.loads(path.read_text(encoding="utf-8")))
-            except (json.JSONDecodeError, KeyError):
+                task = RenderTask.from_dict(_read_json(path))
+            except (json.JSONDecodeError, KeyError, OSError, TypeError, ValueError):
                 path.unlink(missing_ok=True)
                 continue
             task.status = JobStatus.PENDING.value
@@ -145,6 +153,25 @@ class RenderQueue:
             self._move(task.job_id, "processing", "pending", task)
             recovered += 1
         return recovered
+
+    def fail_all_open(self, error: str = "Отменено вручную") -> int:
+        """Все pending/processing → failed."""
+        n = 0
+        for folder in ("pending", "processing"):
+            for path in list((self.root / folder).glob("*.json")):
+                try:
+                    task = RenderTask.from_dict(_read_json(path))
+                except (json.JSONDecodeError, KeyError, OSError, TypeError, ValueError):
+                    dest = self.root / "failed" / path.name
+                    try:
+                        path.replace(dest)
+                    except OSError:
+                        path.unlink(missing_ok=True)
+                    n += 1
+                    continue
+                self.fail(task, error)
+                n += 1
+        return n
 
     def _move(self, job_id: str, src: str, dst: str, task: RenderTask) -> None:
         (self.root / src / f"{job_id}.json").unlink(missing_ok=True)

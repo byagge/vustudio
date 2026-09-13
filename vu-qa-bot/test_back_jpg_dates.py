@@ -96,10 +96,25 @@ class TestBackJpgDates(unittest.TestCase):
             uniq = len({s for s in samples})
             self.assertGreaterEqual(uniq, 2)
 
-    def test_fallback_card_is_id1(self):
-        card = fallback_card_rect(Image.new("RGB", (768, 1024), (40, 30, 28)))
-        self.assertGreater(card.w / card.h, 1.4)
-        self.assertLess(card.w / card.h, 1.8)
+    def test_stamp_ghosts_only_no_draw(self):
+        im = _synth_back()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "back.jpg"
+            im.save(path, format="JPEG", quality=92)
+            before = Image.open(path).convert("RGB")
+            card = find_card_rect(before)
+            mid = before.getpixel((card.x + card.w // 2, card.y + card.h // 2))
+            self.assertTrue(
+                stamp_back_jpg(
+                    path,
+                    table={"B": {"open": "08.09.2023", "expiry": "08.09.2033"}},
+                    draw_dates=False,
+                )
+            )
+            after = Image.open(path).convert("RGB")
+            mid2 = after.getpixel((card.x + card.w // 2, card.y + card.h // 2))
+            # JPEG re-encode may nudge ±2; dates must not appear (no big darkening)
+            self.assertLessEqual(sum(abs(a - b) for a, b in zip(mid, mid2)), 12)
 
     def test_ensure_from_job_json(self):
         from back_jpg_dates import ensure_back_jpg_stamped

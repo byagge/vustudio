@@ -6,16 +6,64 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 
 import load_env  # noqa: F401 — .env до RenderSettings.from_env()
 
 from photoshop_renderer import PhotoshopRenderer, RenderSettings
-from photoshop_server import build_worker_heartbeat, check_photoshop_exe, lock_path, queue_dir, recover_stale_jobs, stale_job_sec, write_heartbeat
+from photoshop_server import (
+    build_worker_heartbeat,
+    check_photoshop_exe,
+    lock_path,
+    queue_dir,
+    recover_stale_jobs,
+    stale_job_sec,
+    write_heartbeat,
+)
 from render_queue import RenderQueue
 
 log = logging.getLogger("render_worker")
+
+
+def _disable_win_console_quickedit() -> None:
+    """Клики по окну cmd не должны ставить процесс на паузу (Quick Edit)."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.GetStdHandle(-10)  # STD_INPUT_HANDLE
+        mode = ctypes.c_uint32()
+        if not kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            return
+        enable_extended = 0x0080
+        enable_quick_edit = 0x0040
+        new_mode = (mode.value | enable_extended) & ~enable_quick_edit
+        if new_mode != mode.value:
+            kernel32.SetConsoleMode(handle, new_mode)
+            log.info("console Quick Edit disabled (clicks won't freeze worker)")
+    except Exception:
+        pass
+
+
+def _configure_logging() -> None:
+    level = getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO)
+    root = logging.getLogger()
+    if not root.handlers:
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setFormatter(
+            logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s")
+        )
+        root.addHandler(handler)
+    root.setLevel(level)
+    try:
+        sys.stdout.reconfigure(line_buffering=True)  # type: ignore[attr-defined]
+    except Exception:
+        pass
+    os.environ.setdefault("PYTHONUNBUFFERED", "1")
 
 
 def _acquire_lock(path: Path):
@@ -53,16 +101,37 @@ def _release_lock(lock) -> None:
         lock.close()
 
 
+def _heartbeat_while(
+    stop: threading.Event,
+    *,
+    worker_id: str,
+    job_id: str,
+    jobs_processed: int,
+    interval: float,
+) -> None:
+    """Пока идёт OpenAI/Photoshop — сайт видит «живой» worker, не зависание."""
+    while not stop.wait(max(2.0, interval)):
+        try:
+            write_heartbeat(
+                build_worker_heartbeat(
+                    worker_id,
+                    status="processing",
+                    current_job_id=job_id,
+                    jobs_processed=jobs_processed,
+                )
+            )
+        except Exception:
+            log.exception("heartbeat update failed")
+
+
 def main() -> int:
     qdir = queue_dir()
     poll = float(os.getenv("RENDER_WORKER_POLL", "2"))
     worker_id = os.getenv("RENDER_WORKER_ID", "worker-1")
     heartbeat_sec = float(os.getenv("RENDER_WORKER_HEARTBEAT", "15"))
 
-    logging.basicConfig(
-        level=getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO),
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    )
+    _configure_logging()
+    _disable_win_console_quickedit()
 
     recovered = recover_stale_jobs(stale_job_sec())
     if recovered:
@@ -150,6 +219,20 @@ def main() -> int:
         )
         started = time.perf_counter()
         last_error: str | None = None
+        stop_hb = threading.Event()
+        hb_thread = threading.Thread(
+            target=_heartbeat_while,
+            kwargs={
+                "stop": stop_hb,
+                "worker_id": worker_id,
+                "job_id": task.job_id,
+                "jobs_processed": jobs_processed,
+                "interval": heartbeat_sec,
+            },
+            name=f"hb-{task.job_id}",
+            daemon=True,
+        )
+        hb_thread.start()
         try:
             result = renderer.render_task(task)
             elapsed_ms = int((time.perf_counter() - started) * 1000)
@@ -210,6 +293,7 @@ def main() -> int:
                 )
             )
         finally:
+            stop_hb.set()
             _release_lock(lock)
             last_heartbeat = 0.0
 

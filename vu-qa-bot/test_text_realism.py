@@ -42,9 +42,13 @@ class TestTextRealism(unittest.TestCase):
         self.assertEqual(len(hand["text_group_values"]), 12)
         self.assertEqual(hand["back_table_map"]["B"]["open"], "27.02.2009")
         self.assertIn("B", hand["back_table_order"])
-        self.assertAlmostEqual(hand["back_table_geom"]["col10"], 0.610)
+        self.assertAlmostEqual(hand["back_table_geom"]["col10"], 0.545)
         self.assertEqual(hand["back_table_order"][-3], "M")
         self.assertEqual(len(blank["text_group_visibility"]), 12)
+        self.assertTrue(hand.get("back_jpg_draw_dates", False))
+        # даты 10/11 в text-group пустые — их ставит Python на JPG
+        date_slots = [v for v in hand["text_group_values"] if v.count(".") == 2]
+        self.assertEqual(date_slots, [])
 
     def test_validate_sample(self):
         block = parse_client_block(SAMPLE)

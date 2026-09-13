@@ -15,9 +15,11 @@ if (-not (Test-Path ".env")) {
 }
 
 $env:RENDER_MODE = "server"
+$env:PYTHONUNBUFFERED = "1"
 Write-Host "Render-worker (Photoshop server mode)"
 Write-Host "Queue: $((Get-Content .env | Select-String 'RENDER_QUEUE_DIR') -replace '.*=', '')"
 Write-Host "Ctrl+C для остановки"
+Write-Host "Не выделяйте текст в окне — иначе Windows ставит процесс на паузу."
 
 Set-Location vu-qa-bot
-..\.venv\Scripts\python render_worker.py
+..\.venv\Scripts\python.exe -u render_worker.py

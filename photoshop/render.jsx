@@ -1,5 +1,5 @@
 #target photoshop
-var OTRIS_JSX_VERSION = "2026-09-13.1";
+var OTRIS_JSX_VERSION = "2026-09-13.4";
 
 (function () {
     if (typeof app === "undefined" || !app.documents) {
@@ -689,7 +689,7 @@ var OTRIS_JSX_VERSION = "2026-09-13.1";
                 }
             }
         }
-        if (job && job._keepTextVisible && !job._stampDates) {
+        if (job && job._keepTextVisible && !job._stampDates && !job.mockup_variant) {
             fillDateLikeLayers(doc, values, visibility);
         }
     }
@@ -819,11 +819,42 @@ var OTRIS_JSX_VERSION = "2026-09-13.1";
         return {
             w: W,
             h: H,
-            col10: (g.col10 || 0.610) * W,
-            col11: (g.col11 || 0.790) * W,
+            col10: (g.col10 || 0.585) * W,
+            col11: (g.col11 || 0.755) * W,
             top: (g.top || 0.115) * H,
             bottom: (g.bottom || 0.850) * H
         };
+    }
+
+    function clearBackDatePlaceholders(doc) {
+        // Убрать плейсхолдеры/старые даты в Text, чтобы не было дублей и «замазок».
+        // Свои vu_10_/vu_11_ не трогаем.
+        var layers = [];
+        collectTextLayers(doc, layers, false);
+        var cleared = 0;
+        var i;
+        for (i = 0; i < layers.length; i++) {
+            if (isStampDateLayer(layers[i])) {
+                continue;
+            }
+            if (!isFillableDateCell(layers[i]) && !isDateLikeLayer(layers[i])) {
+                continue;
+            }
+            try {
+                if (setTextSafe(layers[i], "", false)) {
+                    cleared++;
+                } else {
+                    try {
+                        layers[i].visible = false;
+                        cleared++;
+                    } catch (eHid) {}
+                }
+            } catch (eClr) {}
+        }
+        if (cleared) {
+            writeLog(null, "back date placeholders cleared=" + cleared + " in '" + docName(doc) + "'");
+        }
+        return cleared;
     }
 
     function stampBackTableDates(doc, job, table, order) {
@@ -831,6 +862,7 @@ var OTRIS_JSX_VERSION = "2026-09-13.1";
         if (geom.w <= 0 || geom.h <= 0) {
             return 0;
         }
+        clearBackDatePlaceholders(doc);
         var rowH = geom.h * 0.0545;
         var style = backDateTextStyle(doc, geom, rowH);
         if (job) {
@@ -839,17 +871,24 @@ var OTRIS_JSX_VERSION = "2026-09-13.1";
         writeLog(null, "stamp style pt=" + style.sizePt + " card=" + Math.round(geom.w) + "x" + Math.round(geom.h));
         var n = 0;
         var cats = order && order.length ? order : ["B", "B1", "M"];
+        // Мокап рука/оригинал: только B / B1 / M (как в бланке сцены).
+        var handOnly = job && (job.mockup_variant === "hand" || job.mockup_variant === "original");
+        var allow = {B: 1, B1: 1, M: 1};
         var i;
         for (i = 0; i < cats.length; i++) {
             var cat = cats[i];
-            var data = table[cat];
+            var key = String(cat || "").toUpperCase();
+            if (handOnly && !allow[key]) {
+                continue;
+            }
+            var data = table[cat] || table[key];
             if (!data || !data.open) {
                 continue;
             }
-            var y = tableRowY({y: 0, h: geom.h}, job, cat);
-            n += placeBackDate(doc, data.open, geom.col10, y, style, "vu_10_" + cat);
+            var y = tableRowY({y: 0, h: geom.h}, job, key);
+            n += placeBackDate(doc, data.open, geom.col10, y, style, "vu_10_" + key);
             if (data.expiry) {
-                n += placeBackDate(doc, data.expiry, geom.col11, y, style, "vu_11_" + cat);
+                n += placeBackDate(doc, data.expiry, geom.col11, y, style, "vu_11_" + key);
             }
         }
         return n;
@@ -2409,7 +2448,9 @@ var OTRIS_JSX_VERSION = "2026-09-13.1";
                             var prevStamp = job._stampDates;
                             if (isBackCardName(cardName)) {
                                 job._keepTextVisible = true;
-                                job._stampDates = true;
+                                // hand/original: даты 10/11 на JPG (Python). В Back SO не штампуем —
+                                // иначе пустые плейсхолдеры + сбой stamp = пустая таблица.
+                                job._stampDates = !job.mockup_variant;
                             }
                             editSmartObject(layer, function (innerDoc) {
                                 applyTextMaps(
@@ -3148,25 +3189,19 @@ var OTRIS_JSX_VERSION = "2026-09-13.1";
         if (!flipped) {
             writeLog(null, "back jpeg: no Back layer at top, tried card SO / Text");
         }
-        var overlays = [];
-        try {
-            overlays = overlaySceneBackDates(app.activeDocument, job);
-        } catch (eOv) {
-            writeLog(null, "scene dates overlay: " + eOv);
-            overlays = [];
-        }
+        // Даты 10/11 на JPG рисует Python (back_jpg_dates) — сценовый оверлей
+        // давал «летающие» даты на стене и дубли. Не ставим слои на сцену.
         try {
             exportJpeg(workName, jpgBack);
             var ok = fileReady(jpgBack);
             writeLog(null, ok
-                ? ("back jpeg saved (" + fileSize(jpgBack) + " bytes)")
+                ? ("back jpeg saved (" + fileSize(jpgBack) + " bytes), dates by python")
                 : "back jpeg missing after export");
             return ok;
         } catch (eBack) {
             writeLog(null, "back jpeg failed: " + eBack);
             return false;
         } finally {
-            removeOverlayLayers(overlays);
             try {
                 if (activateByName(workName)) {
                     showCardSide(app.activeDocument, job, "front", 0);
@@ -3312,7 +3347,7 @@ var OTRIS_JSX_VERSION = "2026-09-13.1";
                         try {
                             if (isBackCardName(layer.name)) {
                                 job._keepTextVisible = true;
-                                job._stampDates = true;
+                                job._stampDates = !job.mockup_variant;
                             }
                         } catch (eBn) {}
                         if (editSmartObjectViaExport(layer, function (innerDoc) {
