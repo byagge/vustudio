@@ -2004,12 +2004,12 @@ var OTRIS_JSX_VERSION = "2026-09-12.7";
             );
             var paper = fillDocPaperGray(innerDoc);
             var before = innerDoc.layers.length;
-            placeImageInDoc(innerDoc, imagePath, true);
+            placeImageInDoc(innerDoc, imagePath, false);
             if (innerDoc.layers.length <= before) {
                 writeLog(null, "portrait place failed: " + imagePath);
                 return;
             }
-            scaleActiveLayerFit(innerDoc);
+            scaleActiveLayerCover(innerDoc);
             try {
                 var photo = innerDoc.activeLayer;
                 var i;

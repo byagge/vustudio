@@ -181,20 +181,27 @@ def _sample(im: Image.Image, x: int, y: int) -> tuple[int, int, int]:
 
 
 def _erase_old_marks(im: Image.Image, card: CardRect, geom: dict[str, float]) -> None:
-    """Убрать даты, которые старый оверлей ставил под картой."""
+    """Стереть чернила дат, которые старый оверлей мог поставить под картой.
+
+    Раньше здесь красился сплошной прямоугольник почти во всю высоту карты —
+    он затирал плоским пятном реальный фон фото (руку/стол/обои). Вместо
+    этого точечно заменяем только тёмные пиксели (чернила) локальным цветом
+    соседей, как в _erase_date_ink, не трогая остальной фон.
+    """
     del geom  # API compat
-    draw = ImageDraw.Draw(im)
-    side_x = max(0, card.x - max(8, card.w // 20))
-    below = _sample(im, side_x, min(im.size[1] - 2, card.y + card.h + max(16, card.h // 12)))
-    draw.rectangle(
-        [
-            card.x + int(card.w * 0.16),
-            card.y + card.h + 6,
-            min(im.size[0] - 1, card.x + int(card.w * 0.98)),
-            min(im.size[1] - 1, card.y + card.h + int(card.h * 0.95)),
-        ],
-        fill=below,
-    )
+    x0 = max(0, card.x + int(card.w * 0.16))
+    x1 = min(im.size[0] - 1, card.x + int(card.w * 0.98))
+    y0 = min(im.size[1] - 1, card.y + card.h + 6)
+    y1 = min(im.size[1] - 1, card.y + card.h + int(card.h * 0.30))
+    if x1 <= x0 or y1 <= y0:
+        return
+    gray = im.convert("L")
+    gp = gray.load()
+    pix = im.load()
+    for y in range(y0, y1):
+        for x in range(x0, x1):
+            if gp[x, y] < 150:
+                pix[x, y] = _local_paper(im, x, y)
 
 
 def _cluster_ys(values: list[int], gap: int = 5) -> list[int]:
