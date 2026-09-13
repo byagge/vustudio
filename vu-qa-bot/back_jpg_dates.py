@@ -31,8 +31,8 @@ DEFAULT_GEOM = {
     "bottom": 0.850,
 }
 
-# Середины строк (визуальные центры A..Tb на бланке в сцене).
-_TABLE_TOP = 0.088
+# Середины строк (не верхняя линия): A..Tb.
+_TABLE_TOP = 0.140
 _TABLE_STEP = 0.0545
 DEFAULT_ROW_FRAC = {
     name: round(_TABLE_TOP + _TABLE_STEP * i, 4)
@@ -97,7 +97,7 @@ def find_card_rect(im: Image.Image) -> CardRect | None:
     for y in range(sh):
         for x in range(sw):
             _h, sat, val = px[x, y]
-            mask[y][x] = sat <= 48 and val >= 118
+            mask[y][x] = sat <= 62 and val >= 110
 
     seen = [[False] * sw for _ in range(sh)]
     best: tuple[int, int, int, int, int] | None = None
@@ -135,14 +135,21 @@ def find_card_rect(im: Image.Image) -> CardRect | None:
     w = (x1 - x0) * scale
     h = (y1 - y0) * scale
     aspect = w / h if h else 0
+    ideal_h = int(round(w / ID1_ASPECT)) if w else h
     if aspect < 1.42:
-        card_h = int(round(w / ID1_ASPECT))
-        if 0 < card_h <= h:
-            # пальцы перекрывают верх карты — не режем по нижнему краю впритык
-            y = y + h - card_h - int(card_h * 0.12)
-            h = card_h
+        # слишком высокий силуэт (пальцы сверху) — режем до ID-1
+        if 0 < ideal_h <= h:
+            y = y + h - ideal_h - int(ideal_h * 0.12)
+            h = ideal_h
             if y < y0 * scale:
                 y = y0 * scale
+    elif aspect > 1.72 or h < int(ideal_h * 0.88):
+        # слишком низкий силуэт (низ карты съеден артефактом / гильошем) — наращиваем вниз
+        h = min(ideal_h, src_h - y)
+        if h < ideal_h and y > 0:
+            grow = min(y, ideal_h - h)
+            y -= grow
+            h += grow
     inset_x = max(2, int(w * 0.015))
     inset_y = max(2, int(h * 0.02))
     x += inset_x
@@ -151,7 +158,7 @@ def find_card_rect(im: Image.Image) -> CardRect | None:
     h -= inset_y * 2
     if w < 80 or h < 50:
         return None
-    log.info("back card %sx%s @ %s,%s aspect=%.2f", w, h, x, y, w / h)
+    log.info("back card %sx%s @ %s,%s aspect=%.2f", w, h, x, y, w / h if h else 0)
     return CardRect(x, y, w, h)
 
 
@@ -181,20 +188,11 @@ def _sample(im: Image.Image, x: int, y: int) -> tuple[int, int, int]:
 
 
 def _erase_old_marks(im: Image.Image, card: CardRect, geom: dict[str, float]) -> None:
-    """Убрать даты, которые старый оверлей ставил под картой."""
-    del geom  # API compat
-    draw = ImageDraw.Draw(im)
-    side_x = max(0, card.x - max(8, card.w // 20))
-    below = _sample(im, side_x, min(im.size[1] - 2, card.y + card.h + max(16, card.h // 12)))
-    draw.rectangle(
-        [
-            card.x + int(card.w * 0.16),
-            card.y + card.h + 6,
-            min(im.size[0] - 1, card.x + int(card.w * 0.98)),
-            min(im.size[1] - 1, card.y + card.h + int(card.h * 0.95)),
-        ],
-        fill=below,
-    )
+    """Раньше заливал прямоугольник под картой — при коротком card это давало коричневый квадрат на бланке.
+
+    Больше ничего не рисуем: даты под картой больше не ставим, а фон/палец трогать нельзя.
+    """
+    del im, card, geom
 
 
 def _cluster_ys(values: list[int], gap: int = 5) -> list[int]:
@@ -272,18 +270,9 @@ def table_row_borders(
 
 
 def _cat_border_index(cat: str, lines: list[int]) -> int | None:
-    """Индекс строки в borders для категории.
-
-    Детектор часто начинает линии с низа A / верха A1, из‑за чего
-    idx из алфавита попадает на ряд ниже нужного (B→B1, M→Tm).
-    При наличии линий сдвигаем на -1.
-    """
-    idx = ROW_INDEX.get(str(cat).upper())
-    if idx is None:
-        return None
-    if lines and len(lines) >= 8:
-        return max(0, idx - 1)
-    return idx
+    """Индекс строки в borders для категории (A=0 … Tb=15)."""
+    del lines  # линии уже нормализованы в table_row_borders
+    return ROW_INDEX.get(str(cat).upper())
 
 
 def _cell_for_cat(
@@ -305,10 +294,9 @@ def _cell_for_cat(
         left = float(g.get("col11_left", 0.700))
         right = float(g.get("col11_right", 0.880))
     gap = max(1, borders[idx + 1] - borders[idx])
-    pad_x = max(1, int(card.w * 0.006))
-    # больше отступ сверху — иначе на фото даты липнут к верхней линии ряда
-    pad_top = 2 if gap >= 7 else 1
-    pad_bot = 1 if gap >= 7 else 0
+    pad_x = max(1, int(card.w * 0.005))
+    pad_top = 1 if gap >= 6 else 0
+    pad_bot = 1 if gap >= 6 else 0
     return CellBox(
         x0=card.x + int(card.w * left) + pad_x,
         y0=borders[idx] + pad_top,
@@ -397,15 +385,15 @@ def _draw_date_in_cell(
     text: str,
     cell: CellBox,
     *,
-    ink: tuple[int, int, int] = (22, 22, 26),
+    ink: tuple[int, int, int] = (18, 18, 22),
 ) -> None:
-    """Дата строго по центру ячейки."""
+    """Дата строго по центру ячейки — крупнее и чётче при зуме."""
     text = text.strip()
     if not text or cell.w < 4 or cell.h < 3:
         return
-    target_h = max(5, int(round(cell.h * 0.62)))
-    font = _fit_font(text, max(4, int(cell.w * 0.96)), target_h)
-    # рендер на увеличенном холсте → даунскейл (чётче, чем прямой мелкий кегль)
+    # ~75% высоты ряда: читаемо при зуме, ещё с зазором от линий
+    target_h = max(6, int(round(cell.h * 0.75)))
+    font = _fit_font(text, max(4, int(cell.w * 0.98)), target_h)
     scale = 4
     cw, ch = max(8, cell.w * scale), max(8, cell.h * scale)
     canvas = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
@@ -413,14 +401,13 @@ def _draw_date_in_cell(
     big = _load_font(max(5, int(getattr(font, "size", 8) * scale)))
     bbox = d.textbbox((0, 0), text, font=big)
     tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    # оптический центр заметно ниже геометрии — иначе цифры липнут к верхней линии
     tx = (cw - tw) // 2 - bbox[0]
-    ty = (ch - th) // 2 - bbox[1] + max(scale + 2, th // 5)
-    d.text((tx, ty), text, fill=ink + (245,), font=big)
+    ty = (ch - th) // 2 - bbox[1] + max(1, scale // 2)
+    d.text((tx, ty), text, fill=ink + (255,), font=big)
     scaled = canvas.resize((cell.w, cell.h), Image.Resampling.LANCZOS)
-    # блюр под зерно фото мокапа (рука+камера)
-    blur = 0.55 if cell.h <= 12 else 0.40
-    scaled = scaled.filter(ImageFilter.GaussianBlur(radius=blur))
+    # лёгкий блюр только чтобы не было «векторной» резкости на фото
+    if cell.h <= 14:
+        scaled = scaled.filter(ImageFilter.GaussianBlur(radius=0.22))
     base = im.crop((cell.x0, cell.y0, cell.x1, cell.y1)).convert("RGBA")
     im.paste(Image.alpha_composite(base, scaled).convert("RGB"), (cell.x0, cell.y0))
 

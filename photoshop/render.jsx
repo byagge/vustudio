@@ -1,5 +1,5 @@
 #target photoshop
-var OTRIS_JSX_VERSION = "2026-09-12.7";
+var OTRIS_JSX_VERSION = "2026-09-13.1";
 
 (function () {
     if (typeof app === "undefined" || !app.documents) {
@@ -785,10 +785,10 @@ var OTRIS_JSX_VERSION = "2026-09-12.7";
         BE: 8, CE: 9, C1E: 10, DE: 11, D1E: 12, M: 13, Tm: 14, Tb: 15
     };
     var BACK_ROW_FRAC = {
-        A: 0.088, A1: 0.1425, B: 0.197, B1: 0.2515,
-        C: 0.306, C1: 0.3605, D: 0.415, D1: 0.4695,
-        BE: 0.524, CE: 0.5785, C1E: 0.633, DE: 0.6875,
-        D1E: 0.742, M: 0.7965, Tm: 0.851, Tb: 0.9055
+        A: 0.140, A1: 0.1945, B: 0.249, B1: 0.3035,
+        C: 0.358, C1: 0.4125, D: 0.467, D1: 0.5215,
+        BE: 0.576, CE: 0.6305, C1E: 0.685, DE: 0.7395,
+        D1E: 0.794, M: 0.8485, Tm: 0.903, Tb: 0.9575
     };
 
     function tableRowY(box, job, cat) {
@@ -1898,7 +1898,7 @@ var OTRIS_JSX_VERSION = "2026-09-12.7";
         if (w <= 0 || h <= 0) {
             return;
         }
-        var scale = Math.max(cw / w, ch / h) * 100;
+        var scale = Math.max(cw / w, ch / h) * 102;
         layer.resize(scale, scale, AnchorPosition.MIDDLECENTER);
         b = layer.bounds;
         var cx = (b[0].as("px") + b[2].as("px")) / 2;
@@ -2004,12 +2004,29 @@ var OTRIS_JSX_VERSION = "2026-09-12.7";
             );
             var paper = fillDocPaperGray(innerDoc);
             var before = innerDoc.layers.length;
-            placeImageInDoc(innerDoc, imagePath, true);
+            placeImageInDoc(innerDoc, imagePath, false);
             if (innerDoc.layers.length <= before) {
                 writeLog(null, "portrait place failed: " + imagePath);
                 return;
             }
-            scaleActiveLayerFit(innerDoc);
+            // cover: без серых/белых полей по краям окошка Photo
+            scaleActiveLayerCover(innerDoc);
+            try {
+                var photo = innerDoc.activeLayer;
+                var bPhoto = photo.bounds;
+                var pw = Math.abs(bPhoto[2].as("px") - bPhoto[0].as("px"));
+                var ph = Math.abs(bPhoto[3].as("px") - bPhoto[1].as("px"));
+                var cw = innerDoc.width.as("px");
+                var ch = innerDoc.height.as("px");
+                // чуть увеличить, чтобы не осталось 1px щелей
+                if (pw > 0 && ph > 0 && (pw < cw * 1.01 || ph < ch * 1.01)) {
+                    photo.resize(102, 102, AnchorPosition.MIDDLECENTER);
+                    bPhoto = photo.bounds;
+                    var cx = (bPhoto[0].as("px") + bPhoto[2].as("px")) / 2;
+                    var cy = (bPhoto[1].as("px") + bPhoto[3].as("px")) / 2;
+                    photo.translate(cw / 2 - cx, ch / 2 - cy);
+                }
+            } catch (eCov) {}
             try {
                 var photo = innerDoc.activeLayer;
                 var i;

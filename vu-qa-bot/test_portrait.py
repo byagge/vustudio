@@ -119,18 +119,16 @@ class TestPortraitPreprocess(unittest.TestCase):
         self.assertEqual(flat.mode, "RGB")
         self.assertEqual(flat.getpixel((0, 0)), (228, 228, 228))
 
-    def test_document_window_has_gray_margins(self):
-        """ИИ-портрет сидит в окошке с серым полем сверху и по бокам."""
+    def test_document_window_fills_frame(self):
+        """ИИ-портрет закрывает всё окошко — без серых/белых полей по краям."""
         from portrait_preprocess import _document_window
 
         im = Image.new("RGB", (400, 400), (20, 20, 20))
         out = _document_window(im, 390, 507)
         self.assertEqual(out.size, (390, 507))
-        self.assertGreater(out.getpixel((8, 8))[0], 180)
-        self.assertGreater(out.getpixel((8, 250))[0], 180)
-        self.assertGreater(out.getpixel((380, 250))[0], 180)
-        self.assertGreater(out.getpixel((195, 40))[0], 180)
-        self.assertLess(out.getpixel((195, 230))[0], 80)
+        # углы и края — не серая бумага
+        for xy in ((8, 8), (8, 250), (380, 250), (195, 40), (195, 500)):
+            self.assertLess(out.getpixel(xy)[0], 80, msg=f"empty margin at {xy}")
 
     def test_document_crop_lifts_centered_square(self):
         """Квадрат ИИ с лицом в центре → в 3×4 голова выше, без серого потолка."""

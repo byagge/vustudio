@@ -88,19 +88,9 @@ PAPER_GRAY = (228, 228, 228)
 
 
 def _document_window(im: Image.Image, target_w: int, target_h: int) -> Image.Image:
-    """Бланк ВУ: голова и оба плеча, поле над макушкой, не крупный план лица."""
-    canvas = Image.new("RGB", (target_w, target_h), PAPER_GRAY)
-    inner_w = max(1, int(target_w * 0.56))
-    inner_h = max(1, int(target_h * 0.62))
-    fitted = _cover_crop(im, inner_w, inner_h, document=False, zoom=1.0)
-    x = (target_w - inner_w) // 2
-    top_gap = int(target_h * 0.14)
-    bottom_keep = int(target_h * 0.16)
-    y = top_gap
-    if y + inner_h > target_h - bottom_keep:
-        y = max(0, target_h - inner_h - bottom_keep)
-    canvas.paste(fitted, (x, y))
-    return canvas
+    """Бланк ВУ: фото на всё окошко 3×4 без серых полей по краям."""
+    # cover без letterbox — иначе в smart object Photo остаются пустые зоны
+    return _cover_crop(im, target_w, target_h, document=True, zoom=1.12)
 
 
 def _match_document_background(im: Image.Image, target_gray: int = 228) -> Image.Image:
