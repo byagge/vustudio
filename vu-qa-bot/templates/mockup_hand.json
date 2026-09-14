@@ -38,14 +38,14 @@
   },
   "default_restriction": "AS",
   "back_table_geom": {
-    "col10": 0.545,
-    "col11": 0.685,
-    "col10_left": 0.48,
-    "col10_right": 0.61,
-    "col11_left": 0.61,
-    "col11_right": 0.76,
+    "col10": 0.435,
+    "col11": 0.585,
+    "col10_left": 0.370,
+    "col10_right": 0.500,
+    "col11_left": 0.520,
+    "col11_right": 0.650,
     "top": 0.115,
-    "bottom": 0.850,
+    "bottom": 0.85,
     "rows": {
       "A": 0.218,
       "A1": 0.258,
@@ -66,15 +66,56 @@
     }
   },
   "back_table_rows": [
-    "A", "A1", "B", "B1", "C", "C1", "D", "D1",
-    "BE", "CE", "C1E", "DE", "D1E", "M", "Tm", "Tb"
+    "A",
+    "A1",
+    "B",
+    "B1",
+    "C",
+    "C1",
+    "D",
+    "D1",
+    "BE",
+    "CE",
+    "C1E",
+    "DE",
+    "D1E",
+    "M",
+    "Tm",
+    "Tb"
   ],
   "back_table_layout": [
-    {"cat": "B", "fields": ["open", "open", "expiry", "expiry"]},
-    {"cat": "B1", "fields": ["open", "expiry"]},
-    {"cat": "M", "fields": ["open", "expiry", "open", "expiry"]},
-    {"field": "restriction", "visible": false},
-    {"field": "special_year"}
+    {
+      "cat": "B",
+      "fields": [
+        "open",
+        "open",
+        "expiry",
+        "expiry"
+      ]
+    },
+    {
+      "cat": "B1",
+      "fields": [
+        "open",
+        "expiry"
+      ]
+    },
+    {
+      "cat": "M",
+      "fields": [
+        "open",
+        "expiry",
+        "open",
+        "expiry"
+      ]
+    },
+    {
+      "field": "restriction",
+      "visible": false
+    },
+    {
+      "field": "special_year"
+    }
   ],
   "scene": {
     "background_smart_object": "Меняющийся фон (Ред)",
@@ -84,11 +125,27 @@
     "hand_smart_object": "Рука (ВКЛ смарт-фильтр=тепло)",
     "original_layer": "Оригинал",
     "photo_smart_object": "Photo",
-    "photo_layer_aliases": ["Photo", "photo", "Фото", "фото", "Portrait", "portrait"],
-    "card_smart_objects": ["Front", "Back"],
-    "back_smart_objects": ["Back"],
-    "card_wrappers": ["Слой 0 копия"],
-    "skip_smart_objects": ["Рука (ВКЛ смарт-фильтр=тепло)"]
+    "photo_layer_aliases": [
+      "Photo",
+      "photo",
+      "Фото",
+      "фото",
+      "Portrait",
+      "portrait"
+    ],
+    "card_smart_objects": [
+      "Front",
+      "Back"
+    ],
+    "back_smart_objects": [
+      "Back"
+    ],
+    "card_wrappers": [
+      "Слой 0 копия"
+    ],
+    "skip_smart_objects": [
+      "Рука (ВКЛ смарт-фильтр=тепло)"
+    ]
   },
   "fonts": {
     "layer_fields": {

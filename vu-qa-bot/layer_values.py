@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 from typing import Any
 
@@ -29,16 +28,22 @@ field_values = build_layer_values
 
 
 def _blank_text_group_dates(values: list[str], visibility: list[bool]) -> tuple[list[str], list[bool]]:
-    """Для мокапа рука: даты 10/11 ставит JSX в Back SO, text-group не дублирует."""
-    out_v = list(values)
-    out_vis = list(visibility)
-    date_re = re.compile(r"^\d{2}\.\d{2}\.\d{4}$")
-    for i, val in enumerate(out_v):
-        if date_re.match(str(val or "").strip()):
-            out_v[i] = ""
-            if i < len(out_vis):
-                out_vis[i] = False
-    return out_v, out_vis
+    """Устарело: replace-only больше не очищает даты. Оставлено для тестов/совместимости."""
+    return list(values), list(visibility)
+
+
+def _merge_font_maps(*font_payloads: dict[str, Any]) -> dict[str, Any]:
+    """Склеить by_layer_name из hand+blank, чтобы шрифт серии нашёл оба набора плейсхолдеров."""
+    if not font_payloads:
+        return {}
+    base = dict(font_payloads[0] or {})
+    merged_names: dict[str, str] = {}
+    for payload in font_payloads:
+        if not payload:
+            continue
+        merged_names.update(payload.get("by_layer_name") or {})
+    base["by_layer_name"] = merged_names
+    return base
 
 
 def layers_by_name_for_template(block: VuTextBlock, tpl: dict) -> dict[str, str]:
@@ -104,13 +109,17 @@ def build_render_payload(
     scene_fields = build_scene_job_fields(opts, tpl)
     font_fields = build_font_job_fields(tpl)
 
-    # Рука/оригинал: даты 10/11 на JPG рисует Python (сетка бланка).
-    # text-group даты очищаем, чтобы Back SO не дублировал/не ставил мимо строк.
-    back_jpg_draw = True
+    # Даты 10/11 на hand/original JPG: Python + автодетект геометрии таблицы.
+    # Blank — без JPG-штампа (даты в слоях PSD).
+    back_jpg_draw = False
     tpl_name = str(tpl.get("name") or "")
-    if scene_fields.get("mockup_variant") in ("hand", "original") and "hand" in tpl_name:
-        text_values, text_visibility = _blank_text_group_dates(text_values, text_visibility)
+    mockup_name = str(opts.mockup or "")
+    if mockup_name in ("hand", "original") or (
+        not mockup_name and "hand" in tpl_name
+    ):
         back_jpg_draw = True
+    if mockup_name == "blank" or "blank" in tpl_name:
+        back_jpg_draw = False
 
     return {
         "layers_by_name": layers_by_name,
@@ -166,6 +175,8 @@ def build_photoshop_job(
     merged = dict(blank_map)
     merged.update(payload.get("layers_by_name") or {})
     payload["layers_by_name"] = merged
+    # Шрифты серии/номера: плейсхолдеры blank («04») + hand («77») в одной карте.
+    payload["fonts"] = _merge_font_maps(build_font_job_fields(blank_tpl), payload.get("fonts") or {})
     payload["blank_template"] = str(blank_path.resolve()) if blank_path.is_file() else ""
     payload["blank_layers_by_name"] = blank_map
     payload["blank_text_group_values"] = blank_tg

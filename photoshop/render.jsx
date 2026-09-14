@@ -1,5 +1,5 @@
 #target photoshop
-var OTRIS_JSX_VERSION = "2026-09-13.4";
+var OTRIS_JSX_VERSION = "2026-09-14.3";
 
 (function () {
     if (typeof app === "undefined" || !app.documents) {
@@ -510,7 +510,13 @@ var OTRIS_JSX_VERSION = "2026-09-13.4";
         if (!job || !job.fonts) {
             return;
         }
+        try {
+            if (app.refreshFonts) {
+                app.refreshFonts();
+            }
+        } catch (eRf) {}
         var byName = job.fonts.by_layer_name || {};
+        var applied = 0;
         if (byName) {
             var layers = [];
             collectTextLayers(doc, layers, false);
@@ -518,6 +524,7 @@ var OTRIS_JSX_VERSION = "2026-09-13.4";
                 var layer = layers[i];
                 if (mapHas(byName, layer.name)) {
                     setLayerFont(layer, mapGet(byName, layer.name), job);
+                    applied++;
                 }
             }
         }
@@ -529,8 +536,12 @@ var OTRIS_JSX_VERSION = "2026-09-13.4";
                 collectTextLayers(groups[g], textLayers, true);
                 for (var t = 0; t < textLayers.length; t++) {
                     setLayerFont(textLayers[t], job.fonts.text_group_postscript, job);
+                    applied++;
                 }
             }
+        }
+        if (applied) {
+            writeLog(null, "fonts applied=" + applied + " in '" + docName(doc) + "'");
         }
     }
 
@@ -584,13 +595,16 @@ var OTRIS_JSX_VERSION = "2026-09-13.4";
         return null;
     }
 
-    function updateNamedTextLayers(doc, byName, replacements) {
+    function updateNamedTextLayers(doc, byName, replacements, job) {
+        // Все текстовые слои, включая группу Text — только замена по имени плейсхолдера.
         var layers = [];
-        collectTextLayers(doc, layers, false, "Text");
+        collectTextLayers(doc, layers, false);
         var hit = 0;
+        var fontsByName = (job && job.fonts && job.fonts.by_layer_name) || {};
         for (var i = 0; i < layers.length; i++) {
             var layer = layers[i];
             var value = lookupReplacement(byName || {}, replacements, layer);
+            // Пустое значение не пишем — шаблонный текст не трогаем.
             if (value === null || value === undefined || value === "") {
                 continue;
             }
@@ -603,6 +617,9 @@ var OTRIS_JSX_VERSION = "2026-09-13.4";
             if (setTextSafe(layer, value, true)) {
                 hit++;
                 writeLog(null, "set [" + nm + "] => " + value);
+                if (mapHas(fontsByName, nm)) {
+                    setLayerFont(layer, mapGet(fontsByName, nm), job);
+                }
             }
         }
         writeLog(null, "text-by-name in '" + docName(doc) + "': layers=" + layers.length + " updated=" + hit);
@@ -664,34 +681,51 @@ var OTRIS_JSX_VERSION = "2026-09-13.4";
         if (!values || !values.length) {
             return;
         }
+        // Text-group слоты оборота — только на Back. На Front их трогать нельзя
+        // (иначе индексы затрут 3/4a/4b пустыми значениями с оборота).
+        if (!(job && job._keepTextVisible)) {
+            writeLog(null, "text-group skip: front side '" + docName(doc) + "'");
+            return;
+        }
         var groups = [];
         findGroupsNamed(doc, "Text", groups);
-        if (!(job && job._keepTextVisible && job.back_table_map)) {
-            for (var g = 0; g < groups.length; g++) {
-                if (groupHasDirectSmartObject(groups[g]) && !groupHasDirectTextLayers(groups[g])) {
+        for (var g = 0; g < groups.length; g++) {
+            if (groupHasDirectSmartObject(groups[g]) && !groupHasDirectTextLayers(groups[g])) {
+                continue;
+            }
+            var textLayers = [];
+            collectTextLayers(groups[g], textLayers, true);
+            if (textLayers.length < values.length) {
+                textLayers = [];
+                collectTextLayers(groups[g], textLayers, false);
+            }
+            writeLog(
+                null,
+                "text-group slots=" + textLayers.length + " values=" + values.length +
+                    " in '" + docName(doc) + "'"
+            );
+            var replaced = 0;
+            for (var i = 0; i < textLayers.length; i++) {
+                var val = i < values.length ? values[i] : "";
+                var vis = !visibility || i >= visibility.length ? true : visibility[i];
+                // Пустую строку не пишем — оставляем текст шаблона.
+                // Неактивный слот: только скрыть, без стирания.
+                if (val === null || val === undefined || val === "") {
+                    if (vis === false) {
+                        try {
+                            textLayers[i].visible = false;
+                        } catch (eHidSlot) {}
+                    }
                     continue;
                 }
-                var textLayers = [];
-                collectTextLayers(groups[g], textLayers, true);
-                if (textLayers.length < values.length) {
-                    textLayers = [];
-                    collectTextLayers(groups[g], textLayers, false);
-                }
-                writeLog(
-                    null,
-                    "text-group slots=" + textLayers.length + " values=" + values.length +
-                        " in '" + docName(doc) + "'"
-                );
-                for (var i = 0; i < textLayers.length; i++) {
-                    var val = i < values.length ? values[i] : "";
-                    var vis = !visibility || i >= visibility.length ? true : visibility[i];
-                    setTextSafe(textLayers[i], val, vis);
+                if (setTextSafe(textLayers[i], val, vis !== false)) {
+                    replaced++;
                 }
             }
+            writeLog(null, "text-group replaced=" + replaced + " in '" + docName(doc) + "'");
         }
-        if (job && job._keepTextVisible && !job._stampDates && !job.mockup_variant) {
-            fillDateLikeLayers(doc, values, visibility);
-        }
+        // Дополнительно: любые date-like ячейки таблицы по содержимому.
+        fillDateLikeLayers(doc, values, visibility);
     }
 
     function layerMid(layer) {
@@ -826,35 +860,11 @@ var OTRIS_JSX_VERSION = "2026-09-13.4";
         };
     }
 
-    function clearBackDatePlaceholders(doc) {
-        // Убрать плейсхолдеры/старые даты в Text, чтобы не было дублей и «замазок».
-        // Свои vu_10_/vu_11_ не трогаем.
-        var layers = [];
-        collectTextLayers(doc, layers, false);
-        var cleared = 0;
-        var i;
-        for (i = 0; i < layers.length; i++) {
-            if (isStampDateLayer(layers[i])) {
-                continue;
-            }
-            if (!isFillableDateCell(layers[i]) && !isDateLikeLayer(layers[i])) {
-                continue;
-            }
-            try {
-                if (setTextSafe(layers[i], "", false)) {
-                    cleared++;
-                } else {
-                    try {
-                        layers[i].visible = false;
-                        cleared++;
-                    } catch (eHid) {}
-                }
-            } catch (eClr) {}
-        }
-        if (cleared) {
-            writeLog(null, "back date placeholders cleared=" + cleared + " in '" + docName(doc) + "'");
-        }
-        return cleared;
+    function clearBackDatePlaceholders(doc, job) {
+        // Replace-only: ничего не стираем. Шаблон уже содержит все слоты —
+        // updateTextGroupByIndex / named replace подставляют новые значения.
+        writeLog(null, "clearBackDatePlaceholders: no-op (replace-only) in '" + docName(doc) + "'");
+        return 0;
     }
 
     function stampBackTableDates(doc, job, table, order) {
@@ -862,7 +872,7 @@ var OTRIS_JSX_VERSION = "2026-09-13.4";
         if (geom.w <= 0 || geom.h <= 0) {
             return 0;
         }
-        clearBackDatePlaceholders(doc);
+        // Не вызываем clear — только дописываем/заменяем даты в ячейках.
         var rowH = geom.h * 0.0545;
         var style = backDateTextStyle(doc, geom, rowH);
         if (job) {
@@ -2446,11 +2456,17 @@ var OTRIS_JSX_VERSION = "2026-09-13.4";
                             writeLog(null, "edit card SO in place: " + layer.name);
                             var prevKeep = job._keepTextVisible;
                             var prevStamp = job._stampDates;
+                            var prevClear = job._clearBackDates;
                             if (isBackCardName(cardName)) {
                                 job._keepTextVisible = true;
-                                // hand/original: даты 10/11 на JPG (Python). В Back SO не штампуем —
-                                // иначе пустые плейсхолдеры + сбой stamp = пустая таблица.
-                                job._stampDates = !job.mockup_variant;
+                                // Replace-only: даты 10/11 — в существующие слои Text / date-like.
+                                // Не штампуем новые слои поверх шаблона.
+                                job._stampDates = false;
+                                job._clearBackDates = false;
+                            } else {
+                                // Front: только named replace, без clear/stamp оборота.
+                                job._stampDates = false;
+                                job._clearBackDates = false;
                             }
                             editSmartObject(layer, function (innerDoc) {
                                 applyTextMaps(
@@ -2467,6 +2483,7 @@ var OTRIS_JSX_VERSION = "2026-09-13.4";
                             }, true);
                             job._keepTextVisible = prevKeep;
                             job._stampDates = prevStamp;
+                            job._clearBackDates = prevClear;
                             if (isBackCardName(cardName)) {
                                 try {
                                     layer.visible = false;
@@ -2508,7 +2525,7 @@ var OTRIS_JSX_VERSION = "2026-09-13.4";
         }
         var hits = 0;
         try {
-            hits = updateNamedTextLayers(doc, byName || {}, replacements);
+            hits = updateNamedTextLayers(doc, byName || {}, replacements, job);
         } catch (eName) {
             writeLog(null, "updateNamedTextLayers: " + eName);
         }
@@ -2523,20 +2540,32 @@ var OTRIS_JSX_VERSION = "2026-09-13.4";
             writeLog(null, "updateTextGroupByIndex: " + eGrp);
         }
         try {
-            if (job && job._stampDates) {
+            // Stamp только на обороте и только если text-group ничего не заменил
+            // по датам — иначе дублируем поверх шаблона.
+            if (job && job._stampDates && job._keepTextVisible) {
                 applyBackTableDates(doc, job);
             }
         } catch (eBackTbl) {
             writeLog(null, "applyBackTableDates: " + eBackTbl);
         }
         try {
-            if (!(job && job._keepTextVisible)) {
-                hideGroupsNamed(doc, "Text");
-            } else {
-                writeLog(null, "keep Text visible (back side) in '" + docName(doc) + "'");
-            }
+            applyFontRules(doc, job);
+        } catch (eFont) {
+            writeLog(null, "applyFontRules: " + eFont);
+        }
+        try {
+            // Replace-only: группу Text не прячем — в ней уже подставленные значения.
+            writeLog(null, "keep Text visible (replace-only) in '" + docName(doc) + "'");
         } catch (eHide) {}
-        if (hits < 1) {
+        // На обороте всегда заходим во вложенный Text SO — там слоты дат 10/11.
+        // На лице — только если namedHits=0 (как раньше).
+        var needNested = false;
+        if (job && job._keepTextVisible && !job._textSODone) {
+            needNested = true;
+        } else if (hits < 1 && !(job && job._textSODone)) {
+            needNested = true;
+        }
+        if (needNested) {
             hits += enterNestedTextSmartObject(doc, byName, textVals, textVis, catVis, job, replacements);
         }
         writeLog(null, "applyTextMaps '" + docName(doc) + "' namedHits=" + hits);
@@ -2819,7 +2848,10 @@ var OTRIS_JSX_VERSION = "2026-09-13.4";
                 textShown = showBackTextGroups(doc);
                 toggleNamedLayers(doc, "Text", true);
             } else {
-                hideGroupsNamed(doc, "Text");
+                // Replace-only: на лицевой стороне Text тоже оставляем —
+                // там даты 3/4a/4b и прочие поля шаблона.
+                toggleNamedLayers(doc, "Text", true);
+                writeLog(null, "keep Text visible (front export) in '" + docName(doc) + "'");
             }
         } catch (eTxtSide) {}
         if (shown < 1 && textShown > 0 && side === "back") {
@@ -3344,10 +3376,15 @@ var OTRIS_JSX_VERSION = "2026-09-13.4";
                         writeLog(null, "export-edit card SO: " + layer.name);
                         var prevKeep = job._keepTextVisible;
                         var prevStamp = job._stampDates;
+                        var prevClear = job._clearBackDates;
                         try {
                             if (isBackCardName(layer.name)) {
                                 job._keepTextVisible = true;
-                                job._stampDates = !job.mockup_variant;
+                                job._stampDates = false;
+                                job._clearBackDates = false;
+                            } else {
+                                job._stampDates = false;
+                                job._clearBackDates = false;
                             }
                         } catch (eBn) {}
                         if (editSmartObjectViaExport(layer, function (innerDoc) {
@@ -3366,6 +3403,7 @@ var OTRIS_JSX_VERSION = "2026-09-13.4";
                         }
                         job._keepTextVisible = prevKeep;
                         job._stampDates = prevStamp;
+                        job._clearBackDates = prevClear;
                     } else if (isWrapperSmartObject(layer, job)) {
                         writeLog(null, "export-edit via wrapper: " + layer.name);
                         editSmartObject(layer, function (innerDoc) {
@@ -3420,10 +3458,13 @@ var OTRIS_JSX_VERSION = "2026-09-13.4";
         }
         applyPortraitIfNeeded(doc, job);
         var byName = job.layers_by_name || {};
-        var hits = updateNamedTextLayers(doc, byName, job.text_replacements);
+        var hits = updateNamedTextLayers(doc, byName, job.text_replacements, job);
         applyCategoryVisibility(doc, job.category_visibility || null, byName);
         updateTextGroupByIndex(doc, job.text_group_values || [], job.text_group_visibility || null, job);
-        hideGroupsNamed(doc, "Text");
+        try {
+            applyFontRules(doc, job);
+        } catch (eFontJob) {}
+        // Replace-only: Text не прячем — в ней подставленные значения.
         walkLayers(doc.layers, job, depth || 0);
         writeLog(null, "applyJob depth=" + (depth || 0) + " doc='" + docName(doc) + "' namedHits=" + hits);
     }

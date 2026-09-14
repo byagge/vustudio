@@ -100,16 +100,45 @@ def verify_font_files() -> list[str]:
 
 
 def _install_font_windows(path: Path) -> bool:
+    """Поставить шрифт в сессию Windows так, чтобы его видел Photoshop (не FR_PRIVATE)."""
     import ctypes
 
     gdi32 = ctypes.windll.gdi32
     user32 = ctypes.windll.user32
-    FR_PRIVATE = 0x10
-    added = gdi32.AddFontResourceExW(str(path.resolve()), FR_PRIVATE, 0)
-    if added <= 0:
-        return False
+    path_str = str(path.resolve())
+
+    # 1) Session-wide (все процессы, включая Photoshop)
+    added = int(gdi32.AddFontResourceW(path_str))
     user32.SendMessageW(0xFFFF, 0x001D, 0, 0)  # WM_FONTCHANGE
-    return True
+    if added > 0:
+        return True
+
+    # 2) Fallback: user Fonts folder
+    try:
+        user_fonts = Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft" / "Windows" / "Fonts"
+        user_fonts.mkdir(parents=True, exist_ok=True)
+        dest = user_fonts / path.name
+        if not dest.is_file() or dest.stat().st_size != path.stat().st_size:
+            import shutil
+
+            shutil.copy2(path, dest)
+        added2 = int(gdi32.AddFontResourceW(str(dest.resolve())))
+        try:
+            import winreg
+
+            key = winreg.CreateKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows NT\CurrentVersion\Fonts",
+            )
+            winreg.SetValueEx(key, f"{path.stem} (TrueType)", 0, winreg.REG_SZ, str(dest))
+            winreg.CloseKey(key)
+        except OSError:
+            pass
+        user32.SendMessageW(0xFFFF, 0x001D, 0, 0)
+        return added2 > 0
+    except OSError:
+        log.exception("user-font install failed: %s", path)
+        return False
 
 
 def install_font(spec: FontSpec) -> bool:

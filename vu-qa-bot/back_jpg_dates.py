@@ -7,6 +7,7 @@
 - НЕ рисуем вне бланка.
 - Сценовый оверлей в JSX отключён — даты только здесь.
 - Карта и строки таблицы ищутся по текстуре / линиям сетки.
+- Колонки 10/11 — НЕ 12 (частая ошибка сдвига вправо).
 """
 from __future__ import annotations
 
@@ -28,14 +29,14 @@ DEFAULT_ROWS = (
 )
 STAMP_CATS = ("B", "B1", "M")
 
-# Fallback-геометрия, если линии сетки не найдены.
+# Графы 10/11: сразу после иконок. 10≈0.37–0.50, 11≈0.52–0.65 (не 12).
 DEFAULT_GEOM = {
-    "col10": 0.545,
-    "col11": 0.685,
-    "col10_left": 0.48,
-    "col10_right": 0.61,
-    "col11_left": 0.61,
-    "col11_right": 0.76,
+    "col10": 0.435,
+    "col11": 0.585,
+    "col10_left": 0.370,
+    "col10_right": 0.500,
+    "col11_left": 0.520,
+    "col11_right": 0.650,
     "top": 0.115,
     "bottom": 0.850,
 }
@@ -74,15 +75,26 @@ class CellBox:
 
 
 def _load_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    size = max(5, int(size))
+    """Узкий sans как на бланке ВУ (Arial Narrow → Arial)."""
+    size = max(7, int(size))
+    candidates: list[Path] = []
+    # Сначала шрифты проекта (если когда-нибудь положим отдельный для дат).
+    root = Path(__file__).resolve().parent.parent / "assets" / "fonts"
+    for name in ("Z_NOMER0.TTF", "Z_NOMER.TTF"):
+        candidates.append(root / name)
     for name in (
-        "C:/Windows/Fonts/arial.ttf",
+        "C:/Windows/Fonts/ARIALNB.TTF",
         "C:/Windows/Fonts/ARIALN.TTF",
+        "C:/Windows/Fonts/arialbd.ttf",
+        "C:/Windows/Fonts/arial.ttf",
+        "C:/Windows/Fonts/calibrib.ttf",
         "C:/Windows/Fonts/calibri.ttf",
         "C:/Windows/Fonts/tahoma.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     ):
-        path = Path(name)
+        candidates.append(Path(name))
+    for path in candidates:
         if path.is_file():
             try:
                 return ImageFont.truetype(str(path), size=size)
@@ -111,7 +123,6 @@ def _refine_left_edge(gray: Image.Image, box: tuple[int, int, int, int]) -> int:
         if s > best_s:
             best_s = s
             best_x = x
-    # не уезжать слишком вправо
     if best_x > x0 + int(w * 0.28):
         return x0 + max(2, int(w * 0.04))
     return max(x0, best_x - 2)
@@ -185,14 +196,12 @@ def find_card_rect(im: Image.Image) -> CardRect | None:
     w = (x1 - x0) * scale
     h = (y1 - y0) * scale
 
-    # уточнить левый край и подогнать под ID-1 (верх бланка сохраняем — шапка 10/11)
     x = _refine_left_edge(gray, (x, y, x + w, y + h))
     right = x0 * scale + (x1 - x0) * scale
     w = max(80, right - x)
     ideal_h = int(round(w / ID1_ASPECT))
     if abs(h - ideal_h) > max(8, int(h * 0.08)):
         h = min(ideal_h, src_h - y)
-    # чуть подтянуть верх к реальной кромке карты (текстура часто захватывает фон выше)
     top_nudge = max(0, int(h * 0.04))
     y += top_nudge
     h = max(50, h - top_nudge)
@@ -225,37 +234,98 @@ def fallback_card_rect(im: Image.Image) -> CardRect:
     return CardRect(x, y, w, h)
 
 
-def _local_maxima(scores: list[tuple[int, int]], *, min_gap: int, min_score: int) -> list[int]:
-    """scores: (score, coord) in coord order."""
-    peaks: list[tuple[int, int]] = []
-    n = len(scores)
-    for i in range(2, n - 2):
-        sc, coord = scores[i]
-        if sc < min_score:
+def detect_column_bounds(im: Image.Image, card: CardRect) -> dict[str, float] | None:
+    """Вертикали сетки: левый край 10, 10|11, 11|12."""
+    gray = im.convert("L")
+    gp = gray.load()
+    x0 = card.x + int(card.w * 0.28)
+    x1 = card.x + int(card.w * 0.95)
+    y0 = card.y + int(card.h * 0.16)
+    y1 = card.y + int(card.h * 0.82)
+    if x1 - x0 < 30 or y1 - y0 < 40:
+        return None
+
+    scores: list[tuple[int, int]] = []
+    for x in range(x0, x1):
+        acc = 0
+        for y in range(y0, y1):
+            acc += abs(gp[x, y] - gp[max(x0, x - 1), y])
+        scores.append((acc, x))
+
+    scores.sort(reverse=True)
+    peaks: list[int] = []
+    min_gap = max(8, int(card.w * 0.06))
+    floor = scores[0][0] * 0.28 if scores else 0
+    for sc, x in scores:
+        if sc < floor:
+            break
+        if all(abs(x - px) >= min_gap for px in peaks):
+            peaks.append(x)
+        if len(peaks) >= 7:
+            break
+    peaks.sort()
+    fracs = [(x - card.x) / max(card.w, 1) for x in peaks]
+    inner = [f for f in fracs if 0.32 <= f <= 0.78]
+    if len(inner) < 3:
+        return None
+
+    best: tuple[float, tuple[float, float, float]] | None = None
+    for i in range(len(inner) - 2):
+        a, b, c = inner[i], inner[i + 1], inner[i + 2]
+        g1, g2 = b - a, c - b
+        if g1 < 0.08 or g2 < 0.08 or g1 > 0.22 or g2 > 0.22:
             continue
-        if (
-            sc >= scores[i - 1][0]
-            and sc >= scores[i + 1][0]
-            and sc >= scores[i - 2][0]
-            and sc >= scores[i + 2][0]
-        ):
-            if not peaks or coord - peaks[-1][1] >= min_gap:
-                peaks.append((sc, coord))
-            elif sc > peaks[-1][0]:
-                peaks[-1] = (sc, coord)
-    peaks.sort(key=lambda t: t[1])
-    return [c for _s, c in peaks]
+        if a > 0.48 or c > 0.78:
+            continue
+        pen = abs(g1 - g2) * 40 + abs(((g1 + g2) / 2) - 0.145) * 20
+        if best is None or pen < best[0]:
+            best = (pen, (a, b, c))
+    if best is None:
+        targets = (0.36, 0.51, 0.66)
+        picked: list[float] = []
+        used: set[int] = set()
+        for t in targets:
+            cand = [k for k in range(len(inner)) if k not in used]
+            if not cand:
+                return None
+            j = min(cand, key=lambda k: abs(inner[k] - t))
+            used.add(j)
+            picked.append(inner[j])
+        a, b, c = picked[0], picked[1], picked[2]
+    else:
+        a, b, c = best[1]
+
+    pad = 0.012
+    out = {
+        "col10_left": round(a + pad, 4),
+        "col10_right": round(b - pad, 4),
+        "col11_left": round(b + pad, 4),
+        "col11_right": round(c - pad, 4),
+        "col10": round((a + b) / 2, 4),
+        "col11": round((b + c) / 2, 4),
+    }
+    if out["col10_right"] - out["col10_left"] < 0.08:
+        return None
+    if out["col11_right"] - out["col11_left"] < 0.08:
+        return None
+    log.info(
+        "back cols detected 10=[%.3f,%.3f] 11=[%.3f,%.3f]",
+        out["col10_left"],
+        out["col10_right"],
+        out["col11_left"],
+        out["col11_right"],
+    )
+    return out
 
 
 def detect_table_geometry(
     im: Image.Image,
     card: CardRect,
 ) -> tuple[dict[str, float], dict[str, float]] | None:
-    """Строки по буквам категорий слева; колонки 10/11 — фикс. доли бланка (не путать с 12)."""
+    """Строки по буквам категорий; колонки 10/11 — детект вертикалей / fallback."""
     gray = im.convert("L")
     gp = gray.load()
 
-    # --- строки: тёмные пики в колонке букв A/B/M ---
     x0 = card.x + int(card.w * 0.09)
     x1 = card.x + int(card.w * 0.24)
     y0 = max(0, card.y + int(card.h * 0.06))
@@ -270,7 +340,6 @@ def detect_table_geometry(
             if gp[x, y] < 115:
                 dark += 1
         series.append((float(dark), y))
-    # сглаживание
     smooth: list[tuple[float, int]] = []
     for i in range(len(series)):
         window = series[max(0, i - 1) : i + 2]
@@ -290,54 +359,50 @@ def detect_table_geometry(
     if len(peaks) < 14:
         return None
 
-    def _seg_score(ys: list[int]) -> float:
-        if len(ys) < 16:
-            return 1e9
-        gaps = [ys[i + 1] - ys[i] for i in range(15)]
-        mean = sum(gaps) / 15
-        var = sum((g - mean) ** 2 for g in gaps) / 15
-        # первый зазор не должен быть «дырой» над таблицей
-        head_pen = 0 if gaps[0] <= mean * 1.6 else (gaps[0] - mean) * 3
-        b_frac = (ys[2] - card.y) / max(card.h, 1)
-        b_pen = 0 if 0.24 <= b_frac <= 0.42 else abs(b_frac - 0.33) * 80
-        m_frac = (ys[13] - card.y) / max(card.h, 1)
-        m_pen = 0 if 0.64 <= m_frac <= 0.90 else abs(m_frac - 0.76) * 40
-        step_pen = 0 if 5 <= mean <= 14 else 40
-        return var + b_pen + m_pen + step_pen + head_pen
+    def _fill_to_16(ys: list[int]) -> list[int]:
+        out = list(ys)
+        if len(out) < 2:
+            return out
+        step = max(6, int(round((out[-1] - out[0]) / max(1, len(out) - 1))))
+        while len(out) < 16:
+            out.append(min(card.y + card.h - 2, out[-1] + step))
+        return out[:16]
 
-    best: tuple[float, list[int]] | None = None
-    for start in range(0, max(1, len(peaks) - 15)):
-        ys = [peaks[start + i][1] for i in range(min(16, len(peaks) - start))]
-        if len(ys) < 16:
+    # Якорь: пик буквы B. На этом JPG B ≈ frac 0.43 (не A1 ~0.38).
+    b_idx = None
+    b_best = None
+    for i, (sc, y) in enumerate(peaks):
+        frac = (y - card.y) / max(card.h, 1)
+        if i < 2 or len(peaks) - i < 12:
             continue
-        score = _seg_score(ys)
-        if best is None or score < best[0]:
-            best = (score, ys)
-    # если пиков ровно 16, но B слишком высоко — сдвиг «виртуально» на 1–2 шага вниз
-    if best is not None and len(peaks) >= 16:
-        base = [p[1] for p in peaks[:16]]
-        step = max(5, int(round((base[-1] - base[0]) / 15)))
-        for shift in (0, 1, 2):
-            ys = [base[i] + shift * step for i in range(16)] if shift else list(base)
-            # для shift>0 лучше взять peaks[shift:shift+16] если есть
-            if shift and len(peaks) >= 16 + shift:
-                ys = [peaks[shift + i][1] for i in range(16)]
-            score = _seg_score(ys)
-            if best is None or score < best[0]:
-                best = (score, ys)
-    if best is None:
-        return None
-    row_ys = best[1]
-    # ложные пики над первой буквой A — сдвигаем, пока шаг не станет ровным
-    for _ in range(3):
-        gaps0 = [row_ys[i + 1] - row_ys[i] for i in range(15)]
-        mean0 = sum(gaps0) / 15
-        if gaps0[0] <= mean0 * 1.45:
+        if not (0.40 <= frac <= 0.48):
+            continue
+        pen = abs(frac - 0.430) * 90.0 - float(sc) * 0.2
+        if b_best is None or pen < b_best:
+            b_best = pen
+            b_idx = i
+    if b_idx is None:
+        start = 0
+        while start < 3 and len(peaks) - start >= 15:
+            probe = [peaks[start + j][1] for j in range(min(8, len(peaks) - start))]
+            gaps0 = [probe[j + 1] - probe[j] for j in range(len(probe) - 1)]
+            body = sum(gaps0[1:]) / max(1, len(gaps0) - 1)
+            if gaps0 and gaps0[0] > body * 1.75:
+                start += 1
+                continue
             break
-        step = max(5, int(round(sum(gaps0[1:]) / max(1, len(gaps0) - 1))))
-        # сдвиг: отбросить первый Y, добавить строку снизу
-        row_ys = row_ys[1:] + [row_ys[-1] + step]
-        log.info("back table dropped head junk peak")
+    else:
+        start = max(0, b_idx - 2)
+
+    raw = [peaks[start + i][1] for i in range(min(16, len(peaks) - start))]
+    row_ys = _fill_to_16(raw)
+
+    gaps_f = [row_ys[i + 1] - row_ys[i] for i in range(15)]
+    body_gaps = gaps_f[1:] if gaps_f[0] > (sum(gaps_f[1:]) / 14) * 1.6 else gaps_f
+    mean_gap = max(6, int(round(sum(body_gaps) / len(body_gaps))))
+    # Пики у верхней границы → лёгкий сдвиг в центр ячейки (не на строку ниже).
+    nudge = max(1, int(round(mean_gap * 0.28)))
+    row_ys = [min(card.y + card.h - 4, y + nudge) for y in row_ys]
 
     row_frac = {
         name: round((row_ys[i] - card.y) / max(card.h, 1), 4)
@@ -347,24 +412,46 @@ def detect_table_geometry(
     if len(row_frac) < 14:
         return None
 
-    # колонки: не автодетект (путает 11/12) — доли из бланка VU
+    # Колонки: автодетект, если графа 10 сразу после иконок (~0.36); иначе фикс.
+    auto = detect_column_bounds(im, card)
+    if auto is not None and 0.33 <= float(auto.get("col10_left", 0)) <= 0.42:
+        cols = {
+            "col10": float(auto["col10"]),
+            "col11": float(auto["col11"]),
+            "col10_left": float(auto["col10_left"]),
+            "col10_right": float(auto["col10_right"]),
+            "col11_left": float(auto["col11_left"]),
+            "col11_right": float(auto["col11_right"]),
+        }
+    else:
+        cols = {
+            "col10": DEFAULT_GEOM["col10"],
+            "col11": DEFAULT_GEOM["col11"],
+            "col10_left": DEFAULT_GEOM["col10_left"],
+            "col10_right": DEFAULT_GEOM["col10_right"],
+            "col11_left": DEFAULT_GEOM["col11_left"],
+            "col11_right": DEFAULT_GEOM["col11_right"],
+        }
     g = {
-        "col10": 0.545,
-        "col11": 0.685,
-        "col10_left": 0.48,
-        "col10_right": 0.61,
-        "col11_left": 0.61,
-        "col11_right": 0.76,
+        **cols,
         "top": 0.115,
         "bottom": 0.850,
+        "row_step_px": float(mean_gap),
+        "font_h_px": float(max(14, int(round(mean_gap * 1.75)), int(card.h * 0.088))),
     }
     log.info(
-        "back table rows B=%.3f B1=%.3f M=%.3f (letter peaks) cols fixed 0.48-0.76",
+        "back table start=%s b_idx=%s B=%.3f B1=%.3f M=%.3f gap=%s font_h=%s nudge=%s",
+        start,
+        b_idx,
         row_frac.get("B", 0),
         row_frac.get("B1", 0),
         row_frac.get("M", 0),
+        mean_gap,
+        g["font_h_px"],
+        nudge,
     )
     return g, row_frac
+
 
 
 def _sample(im: Image.Image, x: int, y: int) -> tuple[int, int, int]:
@@ -412,80 +499,172 @@ def _cell_box(
             return None
         frac = _TABLE_TOP + _TABLE_STEP * idx
     if which == "10":
-        left = float(g.get("col10_left", 0.42))
-        right = float(g.get("col10_right", 0.56))
+        left = float(g.get("col10_left", DEFAULT_GEOM["col10_left"]))
+        right = float(g.get("col10_right", DEFAULT_GEOM["col10_right"]))
     else:
-        left = float(g.get("col11_left", 0.56))
-        right = float(g.get("col11_right", 0.70))
-    # высота ячейки ≈ половина шага соседних строк
-    step = _TABLE_STEP
+        left = float(g.get("col11_left", DEFAULT_GEOM["col11_left"]))
+        right = float(g.get("col11_right", DEFAULT_GEOM["col11_right"]))
+
+    step_px = float(g.get("row_step_px") or 0)
     keys = list(DEFAULT_ROWS)
     if key in ROW_INDEX and ROW_INDEX[key] + 1 < len(keys):
         nxt = keys[ROW_INDEX[key] + 1]
         if nxt in row_frac:
-            step = max(0.025, abs(float(row_frac[nxt]) - float(frac)))
-    half = card.h * step * 0.38
+            step_px = max(step_px, abs(float(row_frac[nxt]) - float(frac)) * card.h)
+    if step_px < 6:
+        step_px = max(8.0, card.h * 0.045)
+
+    # ячейка под реальный font_h, иначе target_h клипается до ~8px
+    font_h = float(g.get("font_h_px") or max(12.0, step_px * 1.3))
+    half = max(7, int(round(max(step_px * 0.55, font_h * 0.58))))
     cy = card.y + card.h * float(frac)
     y0 = int(round(cy - half))
     y1 = int(round(cy + half))
     x0 = card.x + int(card.w * left)
     x1 = card.x + int(card.w * right)
-    pad = max(1, int(card.h * 0.006))
+    pad = max(1, int(card.h * 0.004))
     y0 = max(card.y + pad, y0)
     y1 = min(card.y + card.h - pad, y1)
     x0 = max(card.x + pad, x0)
     x1 = min(card.x + card.w - pad, x1)
-    if x1 - x0 < 8 or y1 - y0 < 4:
+    if x1 - x0 < 10 or y1 - y0 < 8:
         return None
     return CellBox(x0, y0, x1, y1)
 
 
-def _fit_font(text: str, max_w: int, max_h: int) -> ImageFont.ImageFont:
-    lo, hi = 5, max(5, min(36, max_h + 2))
-    best = _load_font(lo)
-    probe = ImageDraw.Draw(Image.new("RGB", (4, 4)))
-    while lo <= hi:
-        mid = (lo + hi) // 2
-        font = _load_font(mid)
-        bbox = probe.textbbox((0, 0), text, font=font)
-        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-        if tw <= max_w and th <= max_h:
-            best = font
-            lo = mid + 1
-        else:
-            hi = mid - 1
-    return best
-
-
-def _draw_date_in_cell(im: Image.Image, text: str, cell: CellBox) -> None:
-    """Рисуем только «чернила» даты — без засветки всего прямоугольника ячейки."""
-    text = text.strip()
-    if not text or cell.w < 6 or cell.h < 4:
-        return
-    target_h = max(6, int(round(cell.h * 0.82)))
-    font = _fit_font(text, max(6, cell.w - 2), target_h)
-    scale = 4
-    cw, ch = cell.w * scale, cell.h * scale
-    canvas = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(canvas)
-    big = _load_font(max(5, int(getattr(font, "size", 8) * scale)))
-    bbox = draw.textbbox((0, 0), text, font=big)
-    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    tx = (cw - tw) // 2 - bbox[0]
-    ty = (ch - th) // 2 - bbox[1]
-    draw.text((tx, ty), text, fill=(16, 16, 20, 255), font=big)
-    scaled = canvas.resize((cell.w, cell.h), Image.Resampling.LANCZOS)
-    # убрать полупрозрачный ореол (он «забеливает» гильош)
-    pix = scaled.load()
-    for yy in range(scaled.size[1]):
-        for xx in range(scaled.size[0]):
+def _harden_alpha(im: Image.Image, *, cut: int = 100) -> Image.Image:
+    """Оставить только тёмные чернила; серый антиалиас/белый ореол убрать."""
+    pix = im.load()
+    for yy in range(im.size[1]):
+        for xx in range(im.size[0]):
             r, g, b, a = pix[xx, yy]
-            if a < 96:
+            if a < cut or (r + g + b) > 220:
                 pix[xx, yy] = (0, 0, 0, 0)
             else:
-                pix[xx, yy] = (r, g, b, 255)
-    base = im.crop((cell.x0, cell.y0, cell.x1, cell.y1)).convert("RGBA")
-    im.paste(Image.alpha_composite(base, scaled).convert("RGB"), (cell.x0, cell.y0))
+                pix[xx, yy] = (min(r, 24), min(g, 24), min(b, 28), 255)
+    return im
+
+
+def _scrub_cell_ink(im: Image.Image, cell: CellBox) -> None:
+    """Убрать только почти чёрные пиксели старой даты (гильош не трогаем)."""
+    if cell.w < 6 or cell.h < 4:
+        return
+    crop = im.crop((cell.x0, cell.y0, cell.x1, cell.y1)).convert("RGB")
+    gray = crop.convert("L")
+    gp = gray.load()
+    cp = crop.load()
+    samples: list[tuple[int, int, int]] = []
+    for yy in range(crop.size[1]):
+        for xx in range(crop.size[0]):
+            if 130 <= gp[xx, yy] <= 210:
+                samples.append(cp[xx, yy])
+    if len(samples) < 8:
+        return
+    samples.sort(key=lambda t: sum(t))
+    paper = samples[len(samples) // 2]
+    for yy in range(crop.size[1]):
+        for xx in range(crop.size[0]):
+            if gp[xx, yy] < 55:
+                cp[xx, yy] = paper
+    im.paste(crop, (cell.x0, cell.y0))
+
+
+def _ghost_scrub_boxes(
+    card: CardRect,
+    g: dict[str, float],
+    row_frac: dict[str, float],
+    cat: str,
+) -> list[CellBox]:
+    """Только целевые 10/11 + типичный сдвиг в графу 12."""
+    boxes: list[CellBox] = []
+    for which in ("10", "11"):
+        cell = _cell_box(card, g, row_frac, cat, which)
+        if cell is not None:
+            boxes.append(cell)
+    shift = int(card.w * 0.13)
+    extra: list[CellBox] = []
+    for cell in boxes:
+        extra.append(
+            CellBox(
+                min(card.x + card.w - 4, cell.x0 + shift),
+                cell.y0,
+                min(card.x + card.w - 2, cell.x1 + shift),
+                cell.y1,
+            )
+        )
+    boxes.extend(extra)
+    return boxes
+
+
+def _draw_date_in_cell(im: Image.Image, text: str, cell: CellBox, *, font_h: float | None = None) -> None:
+    """Печать даты: высота как у букв категорий; ширина сжимается, если не влезает."""
+    text = text.strip()
+    if not text or cell.w < 8 or cell.h < 6:
+        return
+
+    target_h = max(8, int(round(font_h or (cell.h * 0.88))))
+    target_h = min(target_h, cell.h)
+    scale = 4
+    big = _load_font(target_h * scale)
+
+    probe = Image.new("RGBA", (8, 8), (0, 0, 0, 0))
+    pb = ImageDraw.Draw(probe).textbbox((0, 0), text, font=big)
+    tw, th = pb[2] - pb[0], pb[3] - pb[1]
+    if tw < 1 or th < 1:
+        return
+
+    glyph = Image.new("RGBA", (tw + 8, th + 8), (0, 0, 0, 0))
+    gd = ImageDraw.Draw(glyph)
+    # жирный штамп: несколько проходов со сдвигом 1px
+    ox, oy = 4 - pb[0], 4 - pb[1]
+    for dx, dy in ((0, 0), (1, 0), (0, 1), (1, 1)):
+        gd.text((ox + dx, oy + dy), text, fill=(4, 4, 6, 255), font=big)
+
+    # обрезать пустые поля глифа — иначе «чернила» сидят у верхнего края бокса
+    gp = glyph.load()
+    gw, gh = glyph.size
+    top_c = 0
+    bot_c = gh - 1
+    while top_c < gh and all(gp[x, top_c][3] < 20 for x in range(gw)):
+        top_c += 1
+    while bot_c > top_c and all(gp[x, bot_c][3] < 20 for x in range(gw)):
+        bot_c -= 1
+    if bot_c > top_c:
+        glyph = glyph.crop((0, top_c, gw, bot_c + 1))
+        tw, th = glyph.size
+
+    out_h = min(cell.h - 1, max(target_h, int(round(th / scale))))
+    out_h = max(8, min(cell.h - 1, out_h))
+    nat_w = max(1, int(round(tw / scale * (out_h / max(1.0, th / scale)))))
+    out_w = min(cell.w - 2, nat_w)
+    out_w = max(6, out_w)
+
+    scaled = glyph.resize((out_w, out_h), Image.Resampling.LANCZOS)
+    _harden_alpha(scaled, cut=100)
+
+    px = cell.x0 + (cell.w - out_w) // 2
+    py = cell.y0 + max(0, (cell.h - out_h) // 2)
+    if py + out_h > cell.y1:
+        py = max(cell.y0, cell.y1 - out_h)
+    base = im.crop((px, py, px + out_w, py + out_h)).convert("RGBA")
+    im.paste(Image.alpha_composite(base, scaled).convert("RGB"), (px, py))
+
+
+def _scrub_date_columns(im: Image.Image, card: CardRect, g: dict[str, float]) -> None:
+    """Стереть старые даты во всех строках граф 10–12 (только почти чёрные пиксели)."""
+    left = float(g.get("col10_left", DEFAULT_GEOM["col10_left"])) - 0.02
+    right = float(g.get("col11_right", DEFAULT_GEOM["col11_right"])) + 0.14
+    left = max(0.30, left)
+    right = min(0.92, right)
+    top = float(g.get("top", 0.115)) + 0.02
+    bottom = float(g.get("bottom", 0.85))
+    box = CellBox(
+        card.x + int(card.w * left),
+        card.y + int(card.h * top),
+        card.x + int(card.w * right),
+        card.y + int(card.h * bottom),
+    )
+    _scrub_cell_ink(im, box)
 
 
 def stamp_back_jpg(
@@ -514,23 +693,31 @@ def stamp_back_jpg(
         return True
 
     if not draw_dates:
-        im.save(src, format="JPEG", quality=94, optimize=True)
-        log.info("back jpg ghosts-only on %s", src.name)
+        # Не стираем графы 10/11 «в пустоту» — иначе пропадает то, что уже
+        # написал Photoshop во вложенном Text SO. Просто оставляем JPG как есть.
+        log.info("back jpg: skip stamp/scrub (draw_dates=false) on %s", src.name)
         return True
 
     if card is None:
         card = fallback_card_rect(im)
 
-    # живая геометрия сетки важнее шаблонных frac
     detected = detect_table_geometry(im, card)
     if detected:
         det_g, det_rows = detected
         g = {**g, **det_g}
         row_frac = {**row_frac, **det_rows}
+        log.info(
+            "back jpg auto-geom col10=%.3f col11=%.3f rows=%s",
+            float(g.get("col10", 0)),
+            float(g.get("col11", 0)),
+            ",".join(f"{k}:{row_frac.get(k, 0):.3f}" for k in ("B", "B1", "M") if k in row_frac),
+        )
 
     if not table:
         log.warning("back jpg: empty table for %s", src.name)
         return False
+
+    _scrub_date_columns(im, card, g)
 
     rows = list(order or DEFAULT_ROWS)
     want = {c.upper() for c in STAMP_CATS}
@@ -545,19 +732,21 @@ def stamp_back_jpg(
         cell10 = _cell_box(card, g, row_frac, key, "10")
         if cell10 is None:
             continue
-        _draw_date_in_cell(im, str(data["open"]).strip(), cell10)
+        font_h = float(g.get("font_h_px") or max(10, card.h * 0.055))
+        _draw_date_in_cell(im, str(data["open"]).strip(), cell10, font_h=font_h)
         expiry = str(data.get("expiry") or "").strip()
         if expiry:
             cell11 = _cell_box(card, g, row_frac, key, "11")
             if cell11 is not None:
-                _draw_date_in_cell(im, expiry, cell11)
+                _draw_date_in_cell(im, expiry, cell11, font_h=font_h)
         placed += 1
         log.info(
-            "back date %s @ y_frac=%.3f cell=%sx%s",
+            "back date %s @ y_frac=%.3f cell=%sx%s font_h=%.1f",
             key,
             row_frac.get(key, 0),
             cell10.w,
             cell10.h,
+            font_h,
         )
     if placed < 1:
         log.warning("back jpg: no stampable categories on %s", src.name)
