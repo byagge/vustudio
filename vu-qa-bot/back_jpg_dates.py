@@ -547,7 +547,7 @@ def _harden_alpha(im: Image.Image, *, cut: int = 100) -> Image.Image:
 
 
 def _scrub_cell_ink(im: Image.Image, cell: CellBox) -> None:
-    """Убрать только почти чёрные пиксели старой даты (гильош не трогаем)."""
+    """Убрать чернила старых дат (включая серые/полупрозрачные дубли). Гильош не трогаем."""
     if cell.w < 6 or cell.h < 4:
         return
     crop = im.crop((cell.x0, cell.y0, cell.x1, cell.y1)).convert("RGB")
@@ -557,7 +557,8 @@ def _scrub_cell_ink(im: Image.Image, cell: CellBox) -> None:
     samples: list[tuple[int, int, int]] = []
     for yy in range(crop.size[1]):
         for xx in range(crop.size[0]):
-            if 130 <= gp[xx, yy] <= 210:
+            # бумага/гильош — средние тона; не брать почти белое и почти чёрное
+            if 140 <= gp[xx, yy] <= 215:
                 samples.append(cp[xx, yy])
     if len(samples) < 8:
         return
@@ -565,7 +566,8 @@ def _scrub_cell_ink(im: Image.Image, cell: CellBox) -> None:
     paper = samples[len(samples) // 2]
     for yy in range(crop.size[1]):
         for xx in range(crop.size[0]):
-            if gp[xx, yy] < 55:
+            # до ~120: чёрные даты + серые «призраки» / outline из PSD
+            if gp[xx, yy] < 120:
                 cp[xx, yy] = paper
     im.paste(crop, (cell.x0, cell.y0))
 
@@ -616,10 +618,9 @@ def _draw_date_in_cell(im: Image.Image, text: str, cell: CellBox, *, font_h: flo
 
     glyph = Image.new("RGBA", (tw + 8, th + 8), (0, 0, 0, 0))
     gd = ImageDraw.Draw(glyph)
-    # жирный штамп: несколько проходов со сдвигом 1px
+    # Один проход — без «жирного» сдвига, иначе на уже чистой ячейке появляется двоение.
     ox, oy = 4 - pb[0], 4 - pb[1]
-    for dx, dy in ((0, 0), (1, 0), (0, 1), (1, 1)):
-        gd.text((ox + dx, oy + dy), text, fill=(4, 4, 6, 255), font=big)
+    gd.text((ox, oy), text, fill=(4, 4, 6, 255), font=big)
 
     # обрезать пустые поля глифа — иначе «чернила» сидят у верхнего края бокса
     gp = glyph.load()

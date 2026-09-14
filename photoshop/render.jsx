@@ -3222,8 +3222,8 @@ var OTRIS_JSX_VERSION = "2026-09-14.5";
         if (!flipped) {
             writeLog(null, "back jpeg: no Back layer at top, tried card SO / Text");
         }
-        // Даты 10/11 только Python (back_jpg_dates). Сценовый оверлей давал
-        // дубли: мелкие «призраки» на сетке и крупные склейки внизу.
+        // Даты 10/11 рисует только Python на JPG. Сценовый оверлей давал
+        // мелкие дубли поверх уже правильного штампа — не ставим.
         try {
             exportJpeg(workName, jpgBack);
             var ok = fileReady(jpgBack);
