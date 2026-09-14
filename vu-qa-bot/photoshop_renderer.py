@@ -280,6 +280,11 @@ class PhotoshopRenderer:
                     draw_dates=True,
                 )
                 log.info("back jpg stamp job=%s ok=%s", work_id, stamped)
+                if stamped:
+                    try:
+                        Path(task.jpg_back_path).with_suffix(".dates_ok").write_text("1", encoding="utf-8")
+                    except OSError:
+                        pass
             except Exception:
                 log.exception("back jpg date stamp failed for job %s", work_id)
         outputs = [p for p in (psd_out, jpg_out, jpg_back_out) if p.is_file() and p.stat().st_size > 0]

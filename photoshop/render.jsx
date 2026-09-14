@@ -1,5 +1,5 @@
 #target photoshop
-var OTRIS_JSX_VERSION = "2026-09-14.4";
+var OTRIS_JSX_VERSION = "2026-09-14.5";
 
 (function () {
     if (typeof app === "undefined" || !app.documents) {
@@ -708,6 +708,13 @@ var OTRIS_JSX_VERSION = "2026-09-14.4";
             for (var i = 0; i < textLayers.length; i++) {
                 var val = i < values.length ? values[i] : "";
                 var vis = !visibility || i >= visibility.length ? true : visibility[i];
+                // JPG stamp сам рисует 10/11 — не дублируем мелким текстом из Text SO.
+                if (job && job.back_jpg_draw_dates && /^\d{2}\.\d{2}\.\d{4}$/.test(String(val || ""))) {
+                    try {
+                        textLayers[i].visible = false;
+                    } catch (eHidDate) {}
+                    continue;
+                }
                 // Пустую строку не пишем — оставляем текст шаблона.
                 // Неактивный слот: только скрыть, без стирания.
                 if (val === null || val === undefined || val === "") {
@@ -725,7 +732,10 @@ var OTRIS_JSX_VERSION = "2026-09-14.4";
             writeLog(null, "text-group replaced=" + replaced + " in '" + docName(doc) + "'");
         }
         // Дополнительно: любые date-like ячейки таблицы по содержимому.
-        fillDateLikeLayers(doc, values, visibility);
+        // При JPG-штампе дат — не трогаем date-like (иначе мелкие дубли).
+        if (!(job && job.back_jpg_draw_dates)) {
+            fillDateLikeLayers(doc, values, visibility);
+        }
     }
 
     function layerMid(layer) {
@@ -3222,29 +3232,19 @@ var OTRIS_JSX_VERSION = "2026-09-14.4";
         if (!flipped) {
             writeLog(null, "back jpeg: no Back layer at top, tried card SO / Text");
         }
-        // Даты 10/11: сначала пробуем сценовый оверлей (мелкий шрифт в ячейках),
-        // затем Python на JPG дублирует/уточняет. Оверлей снимаем после экспорта.
-        var overlays = [];
-        try {
-            overlays = overlaySceneBackDates(app.activeDocument, job) || [];
-        } catch (eOv) {
-            writeLog(null, "scene dates overlay: " + eOv);
-            overlays = [];
-        }
+        // Даты 10/11 рисует только Python (back_jpg_dates) — один чистый проход.
+        // Сценовый оверлей давал двоение с JPG-штампом.
         try {
             exportJpeg(workName, jpgBack);
             var ok = fileReady(jpgBack);
             writeLog(null, ok
-                ? ("back jpeg saved (" + fileSize(jpgBack) + " bytes), dates overlay=" + overlays.length)
+                ? ("back jpeg saved (" + fileSize(jpgBack) + " bytes), dates by python")
                 : "back jpeg missing after export");
             return ok;
         } catch (eBack) {
             writeLog(null, "back jpeg failed: " + eBack);
             return false;
         } finally {
-            try {
-                removeOverlayLayers(overlays);
-            } catch (eRmOv) {}
             try {
                 if (activateByName(workName)) {
                     showCardSide(app.activeDocument, job, "front", 0);
