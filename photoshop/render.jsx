@@ -1,5 +1,5 @@
 #target photoshop
-var OTRIS_JSX_VERSION = "2026-09-14.3";
+var OTRIS_JSX_VERSION = "2026-09-14.4";
 
 (function () {
     if (typeof app === "undefined" || !app.documents) {
@@ -3110,8 +3110,9 @@ var OTRIS_JSX_VERSION = "2026-09-14.3";
                 " @ " + Math.round(box.x) + "," + Math.round(box.y)
         );
         var g = (job && job.back_table_geom) || {};
-        var col10 = box.x + (g.col10 || 0.610) * box.w;
-        var col11 = box.x + (g.col11 || 0.790) * box.w;
+        // Hand: графы 10/11 сразу после иконок (~0.43 / ~0.58), НЕ 12 (~0.75+).
+        var col10 = box.x + (g.col10 != null ? g.col10 : 0.435) * box.w;
+        var col11 = box.x + (g.col11 != null ? g.col11 : 0.585) * box.w;
         var ppi = 72;
         try {
             ppi = Number(doc.resolution) || 72;
@@ -3221,19 +3222,29 @@ var OTRIS_JSX_VERSION = "2026-09-14.3";
         if (!flipped) {
             writeLog(null, "back jpeg: no Back layer at top, tried card SO / Text");
         }
-        // Даты 10/11 на JPG рисует Python (back_jpg_dates) — сценовый оверлей
-        // давал «летающие» даты на стене и дубли. Не ставим слои на сцену.
+        // Даты 10/11: сначала пробуем сценовый оверлей (мелкий шрифт в ячейках),
+        // затем Python на JPG дублирует/уточняет. Оверлей снимаем после экспорта.
+        var overlays = [];
+        try {
+            overlays = overlaySceneBackDates(app.activeDocument, job) || [];
+        } catch (eOv) {
+            writeLog(null, "scene dates overlay: " + eOv);
+            overlays = [];
+        }
         try {
             exportJpeg(workName, jpgBack);
             var ok = fileReady(jpgBack);
             writeLog(null, ok
-                ? ("back jpeg saved (" + fileSize(jpgBack) + " bytes), dates by python")
+                ? ("back jpeg saved (" + fileSize(jpgBack) + " bytes), dates overlay=" + overlays.length)
                 : "back jpeg missing after export");
             return ok;
         } catch (eBack) {
             writeLog(null, "back jpeg failed: " + eBack);
             return false;
         } finally {
+            try {
+                removeOverlayLayers(overlays);
+            } catch (eRmOv) {}
             try {
                 if (activateByName(workName)) {
                     showCardSide(app.activeDocument, job, "front", 0);

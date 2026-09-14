@@ -251,7 +251,12 @@ def main() -> int:
                     try:
                         from back_jpg_dates import ensure_back_jpg_stamped
 
-                        ok = ensure_back_jpg_stamped(task.jpg_back_path, task.text_block)
+                        # Всегда пробуем stamp с text_block; draw принудительно True.
+                        ok = ensure_back_jpg_stamped(
+                            task.jpg_back_path,
+                            task.text_block,
+                            draw_dates=True,
+                        )
                         log.info("job %s back dates stamp=%s", task.job_id, ok)
                     except Exception:
                         log.exception("job %s back dates stamp failed", task.job_id)

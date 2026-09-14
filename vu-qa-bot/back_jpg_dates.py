@@ -437,7 +437,8 @@ def detect_table_geometry(
         "top": 0.115,
         "bottom": 0.850,
         "row_step_px": float(mean_gap),
-        "font_h_px": float(max(14, int(round(mean_gap * 1.75)), int(card.h * 0.088))),
+        # Высота глифа ≤ ~70% шага строки, иначе даты слипаются между рядами.
+        "font_h_px": float(max(8, min(int(round(mean_gap * 0.72)), int(card.h * 0.045)))),
     }
     log.info(
         "back table start=%s b_idx=%s B=%.3f B1=%.3f M=%.3f gap=%s font_h=%s nudge=%s",
@@ -705,12 +706,42 @@ def stamp_back_jpg(
     if detected:
         det_g, det_rows = detected
         g = {**g, **det_g}
-        row_frac = {**row_frac, **det_rows}
+        b_frac = float(det_rows.get("B") or 0)
+        b1_frac = float(det_rows.get("B1") or 0)
+        m_frac = float(det_rows.get("M") or 0)
+        if 0.25 <= b_frac <= 0.55:
+            step = b1_frac - b_frac if 0.02 <= (b1_frac - b_frac) <= 0.08 else float(
+                det_g.get("row_step_px") or 0
+            ) / max(card.h, 1)
+            if step < 0.02 or step > 0.08:
+                step = 0.04
+            # B / B1 с детектора; M / остальные активные — шагом от B (16 строк бланка).
+            row_frac = dict(row_frac)
+            row_frac["B"] = round(b_frac, 4)
+            row_frac["B1"] = round(b_frac + step, 4)
+            row_frac["M"] = round(b_frac + (ROW_INDEX["M"] - ROW_INDEX["B"]) * step, 4)
+            if not (0.55 <= float(row_frac["M"]) <= 0.86):
+                # fallback: M ≈ 0.74 бланка, если шаг увёл вниз
+                row_frac["M"] = float(row_frac.get("M") or 0.74)
+                if row_frac["M"] > 0.86 or row_frac["M"] < 0.55:
+                    row_frac["M"] = 0.74
+            log.info(
+                "back jpg rows from B-anchor B=%.3f B1=%.3f M=%.3f step=%.3f (autoM=%.3f)",
+                row_frac["B"],
+                row_frac["B1"],
+                row_frac["M"],
+                step,
+                m_frac,
+            )
+        else:
+            log.info(
+                "back jpg: keep template rows (auto B=%.3f unreliable)",
+                b_frac,
+            )
         log.info(
-            "back jpg auto-geom col10=%.3f col11=%.3f rows=%s",
+            "back jpg auto-geom col10=%.3f col11=%.3f",
             float(g.get("col10", 0)),
             float(g.get("col11", 0)),
-            ",".join(f"{k}:{row_frac.get(k, 0):.3f}" for k in ("B", "B1", "M") if k in row_frac),
         )
 
     if not table:
@@ -732,7 +763,9 @@ def stamp_back_jpg(
         cell10 = _cell_box(card, g, row_frac, key, "10")
         if cell10 is None:
             continue
-        font_h = float(g.get("font_h_px") or max(10, card.h * 0.055))
+        step_px = float(g.get("row_step_px") or (card.h * 0.04))
+        font_h = float(g.get("font_h_px") or max(8, min(step_px * 0.72, card.h * 0.045)))
+        font_h = min(font_h, max(8.0, cell10.h * 0.85))
         _draw_date_in_cell(im, str(data["open"]).strip(), cell10, font_h=font_h)
         expiry = str(data.get("expiry") or "").strip()
         if expiry:
@@ -817,6 +850,11 @@ def ensure_back_jpg_stamped(
         if use_draw is None and "back_jpg_draw_dates" in data:
             use_draw = bool(data.get("back_jpg_draw_dates"))
     if use_draw is None:
+        use_draw = True
+    # Hand/original: всегда рисуем даты 10/11 — клиентский оборот не может быть пустым.
+    # Blank-карточки без сцены тоже ок с True (если table пуст — fallback на text_block).
+    if use_draw is False and (use_table or text_block):
+        log.warning("back jpg: forcing draw_dates=True (was false) for %s", src.name)
         use_draw = True
     if (use_table or not use_draw) and stamp_back_jpg(
         src,
