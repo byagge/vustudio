@@ -198,7 +198,7 @@ class TestTask4Integration(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn("OTRIS_JSX_VERSION", jsx)
-        self.assertIn("2026-09-14.4", jsx)
+        self.assertIn("2026-09-14.5", jsx)
         self.assertIn("clearBackDatePlaceholders", jsx)
         self.assertIn("_clearBackDates", jsx)
         self.assertIn("applyFontRules", jsx)

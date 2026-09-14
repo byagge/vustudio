@@ -96,6 +96,43 @@ class TestBackJpgDates(unittest.TestCase):
             uniq = len({s for s in samples})
             self.assertGreaterEqual(uniq, 2)
 
+    def test_clears_tiny_ghost_blobs(self):
+        """Мелкие «призраки» дат убираются, нормальная дата в ячейке остаётся."""
+        from back_jpg_dates import DEFAULT_GEOM, DEFAULT_ROW_FRAC, _cell_box, _clear_tiny_ink_blobs
+
+        im = _synth_back()
+        card = find_card_rect(im)
+        self.assertIsNotNone(card)
+        g = {
+            **DEFAULT_GEOM,
+            "row_step_px": float(card.h * 0.045),
+            "font_h_px": 14.0,
+        }
+        draw = ImageDraw.Draw(im)
+        # крошечная клякса-призрак в пустой зоне графы 10
+        gx = card.x + int(card.w * 0.42)
+        gy = card.y + int(card.h * 0.55)
+        draw.rectangle([gx, gy, gx + 18, gy + 5], fill=(20, 20, 22))
+        # нормальная (высокая) дата в B — protect
+        cell = _cell_box(card, g, DEFAULT_ROW_FRAC, "B", "10")
+        self.assertIsNotNone(cell)
+        draw.rectangle(
+            [cell.x0 + 2, cell.y0 + 1, cell.x0 + 40, cell.y0 + 13],
+            fill=(10, 10, 12),
+        )
+        before_ghost = im.getpixel((gx + 2, gy + 2))
+        self.assertLess(sum(before_ghost) / 3, 80)
+        n = _clear_tiny_ink_blobs(im, card, g, protect=[cell], max_h=9)
+        self.assertGreaterEqual(n, 1)
+        after_ghost = im.getpixel((gx + 2, gy + 2))
+        self.assertGreater(sum(after_ghost) / 3, 120)
+        ink = 0
+        for yy in range(cell.y0, cell.y1):
+            for xx in range(cell.x0, cell.x1):
+                if sum(im.getpixel((xx, yy))) / 3 < 80:
+                    ink += 1
+        self.assertGreater(ink, 5)
+
     def test_stamp_ghosts_only_no_draw(self):
         im = _synth_back()
         with tempfile.TemporaryDirectory() as tmp:

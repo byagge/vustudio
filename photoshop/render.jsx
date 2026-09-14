@@ -1,5 +1,5 @@
 #target photoshop
-var OTRIS_JSX_VERSION = "2026-09-14.4";
+var OTRIS_JSX_VERSION = "2026-09-14.5";
 
 (function () {
     if (typeof app === "undefined" || !app.documents) {
@@ -3222,15 +3222,10 @@ var OTRIS_JSX_VERSION = "2026-09-14.4";
         if (!flipped) {
             writeLog(null, "back jpeg: no Back layer at top, tried card SO / Text");
         }
-        // Даты 10/11: сначала пробуем сценовый оверлей (мелкий шрифт в ячейках),
-        // затем Python на JPG дублирует/уточняет. Оверлей снимаем после экспорта.
+        // Даты 10/11 только Python на JPG (back_jpg_dates.py).
+        // Сценовый оверлей отключён: мелкий шрифт оставлял «призраки» вокруг ячеек.
         var overlays = [];
-        try {
-            overlays = overlaySceneBackDates(app.activeDocument, job) || [];
-        } catch (eOv) {
-            writeLog(null, "scene dates overlay: " + eOv);
-            overlays = [];
-        }
+        writeLog(null, "scene dates overlaid=0 (disabled; python stamps JPG)");
         try {
             exportJpeg(workName, jpgBack);
             var ok = fileReady(jpgBack);
