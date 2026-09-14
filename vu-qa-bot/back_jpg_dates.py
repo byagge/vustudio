@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Даты 10/11 на обороте JPG: только рисование в ячейках, без замазывания бланка.
+"""Оборот JPG: точечная зачистка «призраков» дат, без новой отрисовки.
 
 Важно:
-- НЕ стираем пиксели на карте (гильош / иконки / буквы категорий).
-- НЕ рисуем вне бланка.
-- Сценовый оверлей в JSX отключён — даты только здесь.
-- Карта и строки таблицы ищутся по текстуре / линиям сетки.
+- Даты 10/11 подставляет Photoshop (Text SO, replace-only в JSX).
+- Python НЕ рисует новый текст поверх — только убирает смещённые дубликаты.
+- НЕ стираем линии таблицы / гильош / иконки / буквы категорий.
+- Сценовый оверлей в JSX отключён.
 - Колонки 10/11 — НЕ 12 (частая ошибка сдвига вправо).
 """
 from __future__ import annotations
@@ -546,11 +546,28 @@ def _harden_alpha(im: Image.Image, *, cut: int = 100) -> Image.Image:
     return im
 
 
-def _scrub_cell_ink(im: Image.Image, cell: CellBox, *, dark_cut: int = 90) -> None:
-    """Убрать тёмные пиксели старой даты (антиалиас/призраки), гильош не трогаем."""
+def _scrub_cell_ink(
+    im: Image.Image,
+    cell: CellBox,
+    *,
+    dark_cut: int = 55,
+    inset_x: int | None = None,
+    inset_y: int | None = None,
+) -> None:
+    """Убрать почти чёрные чернила даты внутри ячейки, линии сетки по краям не трогаем."""
     if cell.w < 6 or cell.h < 4:
         return
-    crop = im.crop((cell.x0, cell.y0, cell.x1, cell.y1)).convert("RGB")
+    ix = max(1, int(inset_x if inset_x is not None else max(2, cell.w // 8)))
+    iy = max(1, int(inset_y if inset_y is not None else max(2, cell.h // 5)))
+    inner = CellBox(
+        cell.x0 + ix,
+        cell.y0 + iy,
+        cell.x1 - ix,
+        cell.y1 - iy,
+    )
+    if inner.w < 4 or inner.h < 3:
+        return
+    crop = im.crop((inner.x0, inner.y0, inner.x1, inner.y1)).convert("RGB")
     gray = crop.convert("L")
     gp = gray.load()
     cp = crop.load()
@@ -563,118 +580,12 @@ def _scrub_cell_ink(im: Image.Image, cell: CellBox, *, dark_cut: int = 90) -> No
         return
     samples.sort(key=lambda t: sum(t))
     paper = samples[len(samples) // 2]
-    cut = max(40, min(120, int(dark_cut)))
+    cut = max(35, min(70, int(dark_cut)))
     for yy in range(crop.size[1]):
         for xx in range(crop.size[0]):
             if gp[xx, yy] < cut:
                 cp[xx, yy] = paper
-    im.paste(crop, (cell.x0, cell.y0))
-
-
-def _box_overlap(a: CellBox, b: CellBox) -> bool:
-    return not (a.x1 <= b.x0 or a.x0 >= b.x1 or a.y1 <= b.y0 or a.y0 >= b.y1)
-
-
-def _clear_tiny_ink_blobs(
-    im: Image.Image,
-    card: CardRect,
-    g: dict[str, float],
-    *,
-    protect: list[CellBox] | None = None,
-    max_h: float | None = None,
-) -> int:
-    """Убрать мелкие тёмные кляксы в графах 10–12 (призраки оверлея / JPEG).
-
-    Крупные даты (высота ≥ max_h) и зоны protect не трогаем.
-    """
-    left = float(g.get("col10_left", DEFAULT_GEOM["col10_left"])) - 0.015
-    right = float(g.get("col11_right", DEFAULT_GEOM["col11_right"])) + 0.14
-    left = max(0.30, left)
-    right = min(0.94, right)
-    top = float(g.get("top", 0.115)) + 0.01
-    bottom = float(g.get("bottom", 0.85))
-    x0 = card.x + int(card.w * left)
-    x1 = card.x + int(card.w * right)
-    y0 = card.y + int(card.h * top)
-    y1 = card.y + int(card.h * bottom)
-    if x1 - x0 < 20 or y1 - y0 < 20:
-        return 0
-
-    font_h = float(g.get("font_h_px") or max(10.0, card.h * 0.04))
-    limit_h = float(max_h if max_h is not None else max(6.0, font_h * 0.55))
-    protect = list(protect or [])
-
-    gray = im.convert("L")
-    gp = gray.load()
-    pix = im.load()
-    w_box = x1 - x0
-    h_box = y1 - y0
-    visited = [[False] * w_box for _ in range(h_box)]
-    removed = 0
-
-    for ly in range(h_box):
-        for lx in range(w_box):
-            if visited[ly][lx]:
-                continue
-            ax, ay = x0 + lx, y0 + ly
-            if gp[ax, ay] >= 95:
-                visited[ly][lx] = True
-                continue
-            # flood-fill connected dark component
-            q: deque[tuple[int, int]] = deque([(lx, ly)])
-            visited[ly][lx] = True
-            cells: list[tuple[int, int]] = []
-            minx = maxx = lx
-            miny = maxy = ly
-            while q:
-                cx, cy = q.popleft()
-                cells.append((cx, cy))
-                if cx < minx:
-                    minx = cx
-                if cx > maxx:
-                    maxx = cx
-                if cy < miny:
-                    miny = cy
-                if cy > maxy:
-                    maxy = cy
-                for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
-                    nx, ny = cx + dx, cy + dy
-                    if nx < 0 or ny < 0 or nx >= w_box or ny >= h_box:
-                        continue
-                    if visited[ny][nx]:
-                        continue
-                    visited[ny][nx] = True
-                    if gp[x0 + nx, y0 + ny] < 95:
-                        q.append((nx, ny))
-
-            comp_h = maxy - miny + 1
-            comp_w = maxx - minx + 1
-            area = len(cells)
-            # оставляем нормальные даты и линии сетки (длинные тонкие)
-            if comp_h >= limit_h:
-                continue
-            if area < 4:
-                continue
-            if comp_w >= int(card.w * 0.10) and comp_h <= 3:
-                continue  # горизонталь сетки
-            if comp_h >= int(card.h * 0.08) and comp_w <= 3:
-                continue  # вертикаль сетки
-
-            blob = CellBox(x0 + minx, y0 + miny, x0 + maxx + 1, y0 + maxy + 1)
-            if any(_box_overlap(blob, p) for p in protect):
-                continue
-
-            # бумага рядом с компонентой
-            paper = _sample(im, min(im.size[0] - 1, x0 + maxx + 3), y0 + (miny + maxy) // 2)
-            if sum(paper) < 200:
-                paper = _sample(im, x0 + (minx + maxx) // 2, max(0, y0 + miny - 3))
-            for cx, cy in cells:
-                pix[x0 + cx, y0 + cy] = paper
-            removed += 1
-
-    if removed:
-        log.info("back jpg: cleared %s tiny ink blobs (max_h=%.1f)", removed, limit_h)
-    return removed
+    im.paste(crop, (inner.x0, inner.y0))
 
 
 def _ghost_scrub_boxes(
@@ -683,16 +594,22 @@ def _ghost_scrub_boxes(
     row_frac: dict[str, float],
     cat: str,
 ) -> list[CellBox]:
-    """Только целевые 10/11 + типичный сдвиг в графу 12."""
+    """Зоны типичных «призраков» — сдвиг в графу 12 и полоса на линии сетки.
+
+    Целевые ячейки 10/11 сюда НЕ входят: их трогаем только при замене даты.
+    """
     boxes: list[CellBox] = []
+    cells: list[CellBox] = []
     for which in ("10", "11"):
         cell = _cell_box(card, g, row_frac, cat, which)
         if cell is not None:
-            boxes.append(cell)
+            cells.append(cell)
+    if not cells:
+        return boxes
+
     shift = int(card.w * 0.13)
-    extra: list[CellBox] = []
-    for cell in boxes:
-        extra.append(
+    for cell in cells:
+        boxes.append(
             CellBox(
                 min(card.x + card.w - 4, cell.x0 + shift),
                 cell.y0,
@@ -700,15 +617,45 @@ def _ghost_scrub_boxes(
                 cell.y1,
             )
         )
-    boxes.extend(extra)
+
+    step_px = float(g.get("row_step_px") or max(8.0, card.h * 0.04))
+    half = max(2, int(round(step_px * 0.22)))
+    left = min(c.x0 for c in cells)
+    right = max(c.x1 for c in cells)
+    cy = sum(c.y0 + c.h // 2 for c in cells) // len(cells)
+    for dy in (-half, half):
+        y0 = max(card.y + 2, cy + dy - 2)
+        y1 = min(card.y + card.h - 2, cy + dy + 2)
+        if y1 - y0 >= 2:
+            boxes.append(CellBox(left, y0, right, y1))
     return boxes
 
 
+def _scrub_ghost_zones(
+    im: Image.Image,
+    card: CardRect,
+    g: dict[str, float],
+    row_frac: dict[str, float],
+    cats: tuple[str, ...] = STAMP_CATS,
+) -> int:
+    """Убрать только смещённые призраки, не трогая таблицу целиком."""
+    n = 0
+    for cat in cats:
+        for box in _ghost_scrub_boxes(card, g, row_frac, cat):
+            _scrub_cell_ink(im, box, dark_cut=50, inset_x=1, inset_y=0)
+            n += 1
+    if n:
+        log.info("back jpg: scrubbed %s ghost zones", n)
+    return n
+
+
 def _draw_date_in_cell(im: Image.Image, text: str, cell: CellBox, *, font_h: float | None = None) -> None:
-    """Печать даты: высота как у букв категорий; ширина сжимается, если не влезает."""
+    """Замена даты в ячейке: стираем только центр, линии сетки не трогаем."""
     text = text.strip()
     if not text or cell.w < 8 or cell.h < 6:
         return
+
+    _scrub_cell_ink(im, cell, dark_cut=55)
 
     target_h = max(8, int(round(font_h or (cell.h * 0.88))))
     target_h = min(target_h, cell.h)
@@ -756,23 +703,6 @@ def _draw_date_in_cell(im: Image.Image, text: str, cell: CellBox, *, font_h: flo
         py = max(cell.y0, cell.y1 - out_h)
     base = im.crop((px, py, px + out_w, py + out_h)).convert("RGBA")
     im.paste(Image.alpha_composite(base, scaled).convert("RGB"), (px, py))
-
-
-def _scrub_date_columns(im: Image.Image, card: CardRect, g: dict[str, float]) -> None:
-    """Стереть старые даты во всех строках граф 10–12 (только почти чёрные пиксели)."""
-    left = float(g.get("col10_left", DEFAULT_GEOM["col10_left"])) - 0.02
-    right = float(g.get("col11_right", DEFAULT_GEOM["col11_right"])) + 0.14
-    left = max(0.30, left)
-    right = min(0.92, right)
-    top = float(g.get("top", 0.115)) + 0.02
-    bottom = float(g.get("bottom", 0.85))
-    box = CellBox(
-        card.x + int(card.w * left),
-        card.y + int(card.h * top),
-        card.x + int(card.w * right),
-        card.y + int(card.h * bottom),
-    )
-    _scrub_cell_ink(im, box)
 
 
 def stamp_back_jpg(
@@ -855,14 +785,13 @@ def stamp_back_jpg(
         log.warning("back jpg: empty table for %s", src.name)
         return False
 
-    _scrub_date_columns(im, card, g)
-    # Мелкие призраки оверлея / недотёртые даты — до печати нормальных.
-    _clear_tiny_ink_blobs(im, card, g)
+    # Только точечная зачистка: даты уже в JPG из Text SO (replace-only в JSX).
+    # Python не рисует новый текст — иначе дубли и «призраки» поверх шаблона.
+    _scrub_ghost_zones(im, card, g, row_frac)
 
     rows = list(order or DEFAULT_ROWS)
     want = {c.upper() for c in STAMP_CATS}
-    placed = 0
-    protect: list[CellBox] = []
+    touched = 0
     for cat in rows:
         key = str(cat).upper()
         if key not in want:
@@ -870,36 +799,15 @@ def stamp_back_jpg(
         data = table.get(cat) or table.get(key)
         if not data or not str(data.get("open") or "").strip():
             continue
-        cell10 = _cell_box(card, g, row_frac, key, "10")
-        if cell10 is None:
+        if _cell_box(card, g, row_frac, key, "10") is None:
             continue
-        step_px = float(g.get("row_step_px") or (card.h * 0.04))
-        font_h = float(g.get("font_h_px") or max(8, min(step_px * 0.72, card.h * 0.045)))
-        font_h = min(font_h, max(8.0, cell10.h * 0.85))
-        _draw_date_in_cell(im, str(data["open"]).strip(), cell10, font_h=font_h)
-        protect.append(cell10)
-        expiry = str(data.get("expiry") or "").strip()
-        if expiry:
-            cell11 = _cell_box(card, g, row_frac, key, "11")
-            if cell11 is not None:
-                _draw_date_in_cell(im, expiry, cell11, font_h=font_h)
-                protect.append(cell11)
-        placed += 1
-        log.info(
-            "back date %s @ y_frac=%.3f cell=%sx%s font_h=%.1f",
-            key,
-            row_frac.get(key, 0),
-            cell10.w,
-            cell10.h,
-            font_h,
-        )
-    if placed < 1:
+        touched += 1
+        log.info("back date keep %s @ y_frac=%.3f (PS replace-only)", key, row_frac.get(key, 0))
+    if touched < 1:
         log.warning("back jpg: no stampable categories on %s", src.name)
         return False
-    # Ещё раз: мелкие артефакты вокруг уже напечатанных дат.
-    _clear_tiny_ink_blobs(im, card, g, protect=protect)
     im.save(src, format="JPEG", quality=94, optimize=True)
-    log.info("back jpg stamped %s cats on %s (no card erase)", placed, src.name)
+    log.info("back jpg ghost-clean only, %s cats on %s", touched, src.name)
     return True
 
 

@@ -36,8 +36,15 @@ class TestBackJpgDates(unittest.TestCase):
         self.assertGreater(card.w / card.h, 1.35)
         self.assertLess(card.w / card.h, 1.85)
 
-    def test_stamp_writes_on_card_not_below(self):
+    def test_stamp_does_not_draw_new_dates(self):
+        """Python не рисует новый текст — только чистит призраки, PS-даты не трогает."""
         im = _synth_back()
+        draw = ImageDraw.Draw(im)
+        card = find_card_rect(im)
+        draw.rectangle(
+            [card.x + int(card.w * 0.52), card.y + int(card.h * 0.25), card.x + int(card.w * 0.62), card.y + int(card.h * 0.28)],
+            fill=(180, 180, 185),
+        )
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "back.jpg"
             im.save(path, format="JPEG", quality=92)
@@ -51,17 +58,11 @@ class TestBackJpgDates(unittest.TestCase):
             )
             self.assertTrue(ok)
             out = Image.open(path).convert("RGB")
-            card = find_card_rect(out)
-            self.assertIsNotNone(card)
-            below_y = min(out.size[1] - 1, card.y + card.h + 30)
-            below = out.getpixel((card.x + card.w // 2, below_y))
-            self.assertGreater(sum(below) / 3, 40)
-            dark = 0
-            for xx in range(card.x + int(card.w * 0.50), card.x + int(card.w * 0.84), 2):
-                for yy in range(card.y + int(card.h * 0.20), card.y + int(card.h * 0.88), 2):
-                    if sum(out.getpixel((xx, yy))) / 3 < 150:
-                        dark += 1
-            self.assertGreater(dark, 5)
+            card2 = find_card_rect(out)
+            self.assertIsNotNone(card2)
+            # маркер «PS-дата» в ячейке B не закрашен плоским серым
+            sample = out.getpixel((card2.x + int(card2.w * 0.56), card2.y + int(card2.h * 0.26)))
+            self.assertGreaterEqual(sample[0], 170)
 
     def test_stamp_preserves_guilloche_not_gray_bar(self):
         """После штампа колонки 10/11 не должны быть закрашены плоским серым."""
@@ -96,9 +97,9 @@ class TestBackJpgDates(unittest.TestCase):
             uniq = len({s for s in samples})
             self.assertGreaterEqual(uniq, 2)
 
-    def test_clears_tiny_ghost_blobs(self):
-        """Мелкие «призраки» дат убираются, нормальная дата в ячейке остаётся."""
-        from back_jpg_dates import DEFAULT_GEOM, DEFAULT_ROW_FRAC, _cell_box, _clear_tiny_ink_blobs
+    def test_scrubs_ghost_zone_not_full_column(self):
+        """Призраки убираются точечно, без закрашивания всей колонки."""
+        from back_jpg_dates import DEFAULT_GEOM, DEFAULT_ROW_FRAC, _ghost_scrub_boxes, _scrub_ghost_zones
 
         im = _synth_back()
         card = find_card_rect(im)
@@ -109,29 +110,24 @@ class TestBackJpgDates(unittest.TestCase):
             "font_h_px": 14.0,
         }
         draw = ImageDraw.Draw(im)
-        # крошечная клякса-призрак в пустой зоне графы 10
-        gx = card.x + int(card.w * 0.42)
-        gy = card.y + int(card.h * 0.55)
-        draw.rectangle([gx, gy, gx + 18, gy + 5], fill=(20, 20, 22))
-        # нормальная (высокая) дата в B — protect
-        cell = _cell_box(card, g, DEFAULT_ROW_FRAC, "B", "10")
-        self.assertIsNotNone(cell)
-        draw.rectangle(
-            [cell.x0 + 2, cell.y0 + 1, cell.x0 + 40, cell.y0 + 13],
-            fill=(10, 10, 12),
+        ghost_boxes = _ghost_scrub_boxes(card, g, DEFAULT_ROW_FRAC, "B")
+        self.assertGreaterEqual(len(ghost_boxes), 2)
+        box = ghost_boxes[0]
+        draw.rectangle([box.x0 + 2, box.y0 + 2, box.x1 - 2, box.y1 - 2], fill=(20, 20, 22))
+        # линия сетки на краю ячейки — не должна исчезнуть полностью
+        grid_y = card.y + int(card.h * 0.30)
+        draw.line(
+            [(card.x + int(card.w * 0.37), grid_y), (card.x + int(card.w * 0.65), grid_y)],
+            fill=(40, 40, 45),
+            width=1,
         )
-        before_ghost = im.getpixel((gx + 2, gy + 2))
+        before_ghost = im.getpixel((box.x0 + 4, box.y0 + 4))
         self.assertLess(sum(before_ghost) / 3, 80)
-        n = _clear_tiny_ink_blobs(im, card, g, protect=[cell], max_h=9)
-        self.assertGreaterEqual(n, 1)
-        after_ghost = im.getpixel((gx + 2, gy + 2))
-        self.assertGreater(sum(after_ghost) / 3, 120)
-        ink = 0
-        for yy in range(cell.y0, cell.y1):
-            for xx in range(cell.x0, cell.x1):
-                if sum(im.getpixel((xx, yy))) / 3 < 80:
-                    ink += 1
-        self.assertGreater(ink, 5)
+        _scrub_ghost_zones(im, card, g, DEFAULT_ROW_FRAC, cats=("B",))
+        after_ghost = im.getpixel((box.x0 + 4, box.y0 + 4))
+        self.assertGreater(sum(after_ghost) / 3, 100)
+        grid_px = im.getpixel((card.x + int(card.w * 0.50), grid_y))
+        self.assertLess(sum(grid_px) / 3, 120)
 
     def test_stamp_ghosts_only_no_draw(self):
         im = _synth_back()
