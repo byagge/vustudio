@@ -547,7 +547,7 @@ def _harden_alpha(im: Image.Image, *, cut: int = 100) -> Image.Image:
 
 
 def _scrub_cell_ink(im: Image.Image, cell: CellBox) -> None:
-    """Убрать чернила старой даты (в т.ч. серый антиалиас), гильош не трогаем."""
+    """Убрать только почти чёрные пиксели старой даты (гильош не трогаем)."""
     if cell.w < 6 or cell.h < 4:
         return
     crop = im.crop((cell.x0, cell.y0, cell.x1, cell.y1)).convert("RGB")
@@ -557,18 +557,15 @@ def _scrub_cell_ink(im: Image.Image, cell: CellBox) -> None:
     samples: list[tuple[int, int, int]] = []
     for yy in range(crop.size[1]):
         for xx in range(crop.size[0]):
-            # Бумага/гильош: средние тона, не почти белое и не чернила.
-            if 140 <= gp[xx, yy] <= 220:
+            if 130 <= gp[xx, yy] <= 210:
                 samples.append(cp[xx, yy])
     if len(samples) < 8:
         return
     samples.sort(key=lambda t: sum(t))
     paper = samples[len(samples) // 2]
-    paper_l = sum(paper) / 3.0
     for yy in range(crop.size[1]):
         for xx in range(crop.size[0]):
-            # Чернила и полутона антиалиаса заметно темнее бумаги.
-            if gp[xx, yy] < min(120, paper_l - 35):
+            if gp[xx, yy] < 55:
                 cp[xx, yy] = paper
     im.paste(crop, (cell.x0, cell.y0))
 
