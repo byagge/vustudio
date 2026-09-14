@@ -251,23 +251,13 @@ def main() -> int:
                     try:
                         from back_jpg_dates import ensure_back_jpg_stamped
 
-                        # Штамп уже в photoshop_renderer — здесь только если ещё не ставили.
-                        # Повторный scrub+draw даёт «призраки» поверх первой печати.
-                        marker = Path(task.jpg_back_path).with_suffix(".dates_ok")
-                        if marker.is_file():
-                            log.info("job %s back dates already stamped", task.job_id)
-                        else:
-                            ok = ensure_back_jpg_stamped(
-                                task.jpg_back_path,
-                                task.text_block,
-                                draw_dates=True,
-                            )
-                            if ok:
-                                try:
-                                    marker.write_text("1", encoding="utf-8")
-                                except OSError:
-                                    pass
-                            log.info("job %s back dates stamp=%s", task.job_id, ok)
+                        # Всегда пробуем stamp с text_block; draw принудительно True.
+                        ok = ensure_back_jpg_stamped(
+                            task.jpg_back_path,
+                            task.text_block,
+                            draw_dates=True,
+                        )
+                        log.info("job %s back dates stamp=%s", task.job_id, ok)
                     except Exception:
                         log.exception("job %s back dates stamp failed", task.job_id)
                 queue.complete(task)

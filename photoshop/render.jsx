@@ -708,13 +708,6 @@ var OTRIS_JSX_VERSION = "2026-09-14.5";
             for (var i = 0; i < textLayers.length; i++) {
                 var val = i < values.length ? values[i] : "";
                 var vis = !visibility || i >= visibility.length ? true : visibility[i];
-                // JPG stamp сам рисует 10/11 — не дублируем мелким текстом из Text SO.
-                if (job && job.back_jpg_draw_dates && /^\d{2}\.\d{2}\.\d{4}$/.test(String(val || ""))) {
-                    try {
-                        textLayers[i].visible = false;
-                    } catch (eHidDate) {}
-                    continue;
-                }
                 // Пустую строку не пишем — оставляем текст шаблона.
                 // Неактивный слот: только скрыть, без стирания.
                 if (val === null || val === undefined || val === "") {
@@ -732,10 +725,7 @@ var OTRIS_JSX_VERSION = "2026-09-14.5";
             writeLog(null, "text-group replaced=" + replaced + " in '" + docName(doc) + "'");
         }
         // Дополнительно: любые date-like ячейки таблицы по содержимому.
-        // При JPG-штампе дат — не трогаем date-like (иначе мелкие дубли).
-        if (!(job && job.back_jpg_draw_dates)) {
-            fillDateLikeLayers(doc, values, visibility);
-        }
+        fillDateLikeLayers(doc, values, visibility);
     }
 
     function layerMid(layer) {
@@ -3232,8 +3222,8 @@ var OTRIS_JSX_VERSION = "2026-09-14.5";
         if (!flipped) {
             writeLog(null, "back jpeg: no Back layer at top, tried card SO / Text");
         }
-        // Даты 10/11 рисует только Python (back_jpg_dates) — один чистый проход.
-        // Сценовый оверлей давал двоение с JPG-штампом.
+        // Даты 10/11 только Python (back_jpg_dates). Сценовый оверлей давал
+        // дубли: мелкие «призраки» на сетке и крупные склейки внизу.
         try {
             exportJpeg(workName, jpgBack);
             var ok = fileReady(jpgBack);
