@@ -687,6 +687,12 @@ var OTRIS_JSX_VERSION = "2026-09-14.5";
             writeLog(null, "text-group skip: front side '" + docName(doc) + "'");
             return;
         }
+        // Даты 10/11 на hand рисует Python на JPG — в PSD их не пишем и прячем,
+        // иначе на экспорте остаются «призраки» под штампом.
+        var jpgDates = !!(job && job.back_jpg_draw_dates);
+        if (jpgDates) {
+            hideBackDateLayers(doc);
+        }
         var groups = [];
         findGroupsNamed(doc, "Text", groups);
         for (var g = 0; g < groups.length; g++) {
@@ -708,8 +714,6 @@ var OTRIS_JSX_VERSION = "2026-09-14.5";
             for (var i = 0; i < textLayers.length; i++) {
                 var val = i < values.length ? values[i] : "";
                 var vis = !visibility || i >= visibility.length ? true : visibility[i];
-                // Пустую строку не пишем — оставляем текст шаблона.
-                // Неактивный слот: только скрыть, без стирания.
                 if (val === null || val === undefined || val === "") {
                     if (vis === false) {
                         try {
@@ -718,14 +722,45 @@ var OTRIS_JSX_VERSION = "2026-09-14.5";
                     }
                     continue;
                 }
+                // Слоты дат — только Python на JPG.
+                if (jpgDates && /^\d{2}\.\d{2}\.\d{4}$/.test(String(val))) {
+                    try {
+                        textLayers[i].visible = false;
+                    } catch (eHidDate) {}
+                    continue;
+                }
                 if (setTextSafe(textLayers[i], val, vis !== false)) {
                     replaced++;
                 }
             }
             writeLog(null, "text-group replaced=" + replaced + " in '" + docName(doc) + "'");
         }
-        // Дополнительно: любые date-like ячейки таблицы по содержимому.
-        fillDateLikeLayers(doc, values, visibility);
+        if (!jpgDates) {
+            fillDateLikeLayers(doc, values, visibility);
+        }
+    }
+
+    function hideBackDateLayers(doc) {
+        var layers = [];
+        collectTextLayers(doc, layers, false);
+        var n = 0;
+        var i;
+        for (i = 0; i < layers.length; i++) {
+            if (!isFillableDateCell(layers[i]) && !isDateLikeLayer(layers[i])) {
+                continue;
+            }
+            if (isStampDateLayer(layers[i])) {
+                continue;
+            }
+            try {
+                layers[i].visible = false;
+                n++;
+            } catch (eH) {}
+        }
+        if (n) {
+            writeLog(null, "back date layers hidden=" + n + " (jpg stamp) in '" + docName(doc) + "'");
+        }
+        return n;
     }
 
     function layerMid(layer) {
@@ -3222,8 +3257,8 @@ var OTRIS_JSX_VERSION = "2026-09-14.5";
         if (!flipped) {
             writeLog(null, "back jpeg: no Back layer at top, tried card SO / Text");
         }
-        // Даты 10/11 рисует только Python на JPG. Сценовый оверлей давал
-        // мелкие дубли поверх уже правильного штампа — не ставим.
+        // Даты 10/11 на JPG рисует только Python (back_jpg_dates) —
+        // сценовый оверлей давал дубли/«призраки» поверх штампа.
         try {
             exportJpeg(workName, jpgBack);
             var ok = fileReady(jpgBack);

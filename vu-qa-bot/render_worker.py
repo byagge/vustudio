@@ -251,7 +251,8 @@ def main() -> int:
                     try:
                         from back_jpg_dates import ensure_back_jpg_stamped
 
-                        # Всегда пробуем stamp с text_block; draw принудительно True.
+                        # photoshop_renderer уже штампует; здесь — запасной проход,
+                        # если рендерёр не вызвал stamp (или файл пришёл без дат).
                         ok = ensure_back_jpg_stamped(
                             task.jpg_back_path,
                             task.text_block,
