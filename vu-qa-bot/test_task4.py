@@ -198,7 +198,7 @@ class TestTask4Integration(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn("OTRIS_JSX_VERSION", jsx)
-        self.assertIn("2026-09-14.5", jsx)
+        self.assertIn("2026-09-16.1", jsx)
         self.assertIn("clearBackDatePlaceholders", jsx)
         self.assertIn("_clearBackDates", jsx)
         self.assertIn("applyFontRules", jsx)
@@ -215,6 +215,8 @@ class TestTask4Integration(unittest.TestCase):
         self.assertIn("back table dates named=", jsx)
         self.assertIn("applyBackTableDates", jsx)
         self.assertIn("stampBackTableDates", jsx)
+        self.assertIn("applyCustomBackground", jsx)
+        self.assertIn("custom_background_path", jsx)
         self.assertIn("overlaySceneBackDates", jsx)
         self.assertIn("scene dates overlaid=", jsx)
         self.assertIn("inferCardFromTallBox", jsx)

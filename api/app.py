@@ -62,6 +62,7 @@ from .schemas import (
     MockupsResponse,
     PortraitGenerateRequest,
     PortraitGenerateResponse,
+    BackgroundUploadResponse,
     PortraitUploadResponse,
     QueueJobItem,
     QueueJobsResponse,
@@ -288,6 +289,25 @@ def create_app() -> FastAPI:
             ),
         )
 
+    @app.post("/api/v1/background/upload", response_model=BackgroundUploadResponse)
+    async def background_upload(file: UploadFile = File(...), _: None = Depends(auth)):
+        import asyncio
+        import uuid
+
+        from background_service import prepare_upload
+
+        data = await file.read()
+        if len(data) < 100:
+            raise HTTPException(400, "Файл слишком мал")
+        result = await asyncio.to_thread(prepare_upload, data, f"web_{uuid.uuid4().hex[:12]}")
+        if not result.ok:
+            raise HTTPException(400, result.message)
+        return BackgroundUploadResponse(
+            ok=True,
+            background_path=result.path_str or "",
+            message=result.message,
+        )
+
     @app.post("/api/v1/portrait/upload", response_model=PortraitUploadResponse)
     async def portrait_upload(file: UploadFile = File(...), _: None = Depends(auth)):
         import asyncio
@@ -329,6 +349,7 @@ def create_app() -> FastAPI:
             background=body.background,
             portrait_path=body.portrait_path,
             generate_portrait=body.generate_portrait,
+            custom_background_path=body.custom_background_path,
         )
         if not queued.ok:
             raise HTTPException(400, queued.message)

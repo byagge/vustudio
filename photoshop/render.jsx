@@ -1,5 +1,5 @@
 #target photoshop
-var OTRIS_JSX_VERSION = "2026-09-14.5";
+var OTRIS_JSX_VERSION = "2026-09-16.1";
 
 (function () {
     if (typeof app === "undefined" || !app.documents) {
@@ -1508,8 +1508,70 @@ var OTRIS_JSX_VERSION = "2026-09-14.5";
         }
     }
 
+    function applyCustomBackground(doc, job) {
+        var imagePath = job.custom_background_path;
+        if (!imagePath) {
+            return false;
+        }
+        var file = new File(imagePath);
+        if (!file.exists) {
+            writeLog(null, "custom background missing: " + imagePath);
+            return false;
+        }
+        var prefix = (job.scene && job.scene.background_prefix) || "Вариант ";
+        var count = (job.scene && job.scene.background_count) || 10;
+        var slot = job.background || 1;
+        var i;
+        for (i = 1; i <= count; i++) {
+            forEachLayerByName(doc, prefix + i, function (layer) {
+                setLayerVisible(layer, false);
+            });
+        }
+        var placed = false;
+        var targetName = prefix + slot;
+        forEachLayerByName(doc, targetName, function (layer) {
+            if (isSmartObject(layer)) {
+                editSmartObject(layer, function (variantDoc) {
+                    var n;
+                    for (n = variantDoc.layers.length - 1; n >= 0; n--) {
+                        try {
+                            variantDoc.layers[n].remove();
+                        } catch (eRm) {}
+                    }
+                    placeImageInDoc(variantDoc, imagePath, false);
+                    scaleActiveLayerCover(variantDoc);
+                    placed = true;
+                }, true);
+            } else {
+                try {
+                    setLayerVisible(layer, true);
+                } catch (eVis) {}
+            }
+        });
+        if (!placed) {
+            placeImageInDoc(doc, imagePath, false);
+            scaleActiveLayerCover(doc);
+            try {
+                doc.activeLayer.name = "Custom BG";
+            } catch (eNm) {}
+            placed = true;
+        } else {
+            forEachLayerByName(doc, targetName, function (layer) {
+                setLayerVisible(layer, true);
+            });
+        }
+        writeLog(null, "custom background slot=" + slot + " in '" + docName(doc) + "'");
+        return placed;
+    }
+
     function applyBackground(doc, job) {
-        if (!job.background || !job.scene) {
+        if (!job.scene) {
+            return 0;
+        }
+        if (job.custom_background_path) {
+            return applyCustomBackground(doc, job) ? 1 : 0;
+        }
+        if (!job.background) {
             return 0;
         }
         var prefix = job.scene.background_prefix || "Вариант ";

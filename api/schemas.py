@@ -78,6 +78,7 @@ class RenderRequest(BaseModel):
     background: int = Field(1, ge=1, le=10)
     portrait_path: str | None = None
     generate_portrait: bool = False
+    custom_background_path: str | None = None
     wait: bool = Field(True, description="Ждать завершения worker (до 120 сек)")
 
     @field_validator("mockup")
@@ -213,6 +214,12 @@ class AdminDashboardResponse(BaseModel):
 class PortraitUploadResponse(BaseModel):
     ok: bool
     portrait_path: str
+    message: str = ""
+
+
+class BackgroundUploadResponse(BaseModel):
+    ok: bool
+    background_path: str
     message: str = ""
 
 

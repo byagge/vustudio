@@ -7,6 +7,7 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
+from pathlib import Path
 from typing import Any
 
 from text_parser import VuTextBlock, parse_client_block
@@ -31,15 +32,20 @@ class RenderOptions:
     background: int = 1
     portrait_path: str | None = None
     generate_portrait: bool = False
+    custom_background_path: str | None = None
 
     def normalized(self) -> RenderOptions:
         mockup = self.mockup if self.mockup in {m.value for m in MockupKind} else MockupKind.HAND.value
         bg = max(1, min(10, int(self.background or 1)))
+        custom_bg = (self.custom_background_path or "").strip() or None
+        if custom_bg and not Path(custom_bg).is_file():
+            custom_bg = None
         return RenderOptions(
             mockup=mockup,
             background=bg,
             portrait_path=self.portrait_path,
             generate_portrait=self.generate_portrait,
+            custom_background_path=custom_bg,
         )
 
 
@@ -98,6 +104,7 @@ class RenderTask:
                 background=int(opts.get("background", 1)),
                 portrait_path=opts.get("portrait_path"),
                 generate_portrait=bool(opts.get("generate_portrait")),
+                custom_background_path=opts.get("custom_background_path"),
             ).normalized(),
             status=data.get("status", JobStatus.PENDING.value),
             created_at=data.get("created_at", ""),

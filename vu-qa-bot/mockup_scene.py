@@ -137,10 +137,12 @@ def build_scene_job_fields(opts: RenderOptions, template: dict | None = None) ->
         }
 
     bg = max(1, min(background_count(scene), int(opts.background or 1)))
+    custom = (opts.custom_background_path or "").strip() or None
     return {
         "mockup_variant": spec.mockup_variant,
         "background": bg,
         "scene": scene,
+        "custom_background_path": custom,
     }
 
 
@@ -149,6 +151,8 @@ def scene_summary(opts: RenderOptions) -> str:
     if not spec.supports_background:
         return f"{spec.title} (без фона/руки)"
     variant = "рука+док" if spec.mockup_variant == "hand" else "оригинал"
+    if opts.custom_background_path:
+        return f"{spec.title}, {variant}, свой фон"
     scene = scene_from_template(load_template(spec.template))
     layer = background_layer_name(scene, opts.background)
     return f"{spec.title}, {variant}, фон #{opts.background} ({layer})"
@@ -171,6 +175,7 @@ def normalize_options_for_mockup(opts: RenderOptions) -> RenderOptions:
         background=bg,
         portrait_path=portrait_path,
         generate_portrait=generate_portrait,
+        custom_background_path=normalized.custom_background_path,
     )
 
 

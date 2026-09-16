@@ -206,21 +206,23 @@ def back_only_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[back_menu_btn()]])
 
 
-def render_options_kb(bg: int, portrait_on: bool) -> InlineKeyboardMarkup:
-    row1 = [digit_btn(i, f"rb:{i}", selected=(bg == i)) for i in range(1, 6)]
-    row2 = [digit_btn(i, f"rb:{i}", selected=(bg == i)) for i in range(6, 11)]
+def render_options_kb(
+    bg: int,
+    portrait_on: bool,
+    *,
+    custom_bg: bool = False,
+    replace_job_id: str | None = None,
+) -> InlineKeyboardMarkup:
+    row1 = [digit_btn(i, f"rb:{i}", selected=(bg == i and not custom_bg)) for i in range(1, 6)]
+    row2 = [digit_btn(i, f"rb:{i}", selected=(bg == i and not custom_bg)) for i in range(6, 11)]
     port = ("✓ " if portrait_on else "") + "Портрет (ИИ)"
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            row1,
-            row2,
-            [
-                btn(port, "rp:ai", "user"),
-                btn("Отрисовать", "rq:go", "check"),
-            ],
-            [back_menu_btn()],
-        ]
-    )
+    custom_label = "✓ Свой фон" if custom_bg else "Свой фон"
+    rows: list[list[InlineKeyboardButton]] = [row1, row2, [btn(custom_label, "rb:custom", "folder")]]
+    rows.append([btn(port, "rp:ai", "user"), btn("Отрисовать", "rq:go", "check")])
+    if replace_job_id:
+        rows.append([btn("Отмена замены", f"jf:cancel:{replace_job_id}", "stop")])
+    rows.append([back_menu_btn()])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def portrait_kb() -> InlineKeyboardMarkup:
@@ -236,10 +238,11 @@ def profile_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[back_menu_btn()]])
 
 
-def after_render_kb(web_base: str = "") -> InlineKeyboardMarkup:
-    rows: list[list[InlineKeyboardButton]] = [
-        [btn("Мои задачи", "m:jobs", "briefcase")],
-    ]
+def after_render_kb(web_base: str = "", *, job_id: str | None = None) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    if job_id:
+        rows.append([btn("Сменить фон", f"jf:{job_id}", "folder")])
+    rows.append([btn("Мои задачи", "m:jobs", "briefcase")])
     if panel_url(web_base):
         rows.append([panel_btn(web_base)])
     rows.append([back_menu_btn()])
@@ -291,7 +294,12 @@ def jobs_list_kb(
 
 
 def job_detail_kb(
-    job_id: str, *, has_jpg: bool, has_psd: bool, has_jpg_back: bool = False
+    job_id: str,
+    *,
+    has_jpg: bool,
+    has_psd: bool,
+    has_jpg_back: bool = False,
+    can_swap_bg: bool = False,
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     if has_jpg:
@@ -300,6 +308,8 @@ def job_detail_kb(
         rows.append([btn("Скачать JPG оборот", f"jb:{job_id}", "folder")])
     if has_psd:
         rows.append([btn("Скачать PSD", f"jp:{job_id}", "box")])
+    if can_swap_bg and has_jpg:
+        rows.append([btn("Сменить фон", f"jf:{job_id}", "folder")])
     rows.append([btn("К задачам", "m:jobs", "briefcase")])
     rows.append([back_menu_btn()])
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -504,14 +514,18 @@ def job_detail_text(
     return assert_telegram_html("\n".join(lines))
 
 
-def render_prompt_text(summary: str, bg: int) -> str:
+def render_prompt_text(summary: str, bg: int, *, custom_bg: bool = False) -> str:
     nums = " ".join(ce_digit(i) if i < 10 else ce("ten") for i in range(1, 11))
+    if custom_bg:
+        bg_line = f"{ce('folder')} <b>свой фон</b> (загружен)"
+    else:
+        bg_line = f"Фон: {ce_digit(bg) if bg < 10 else ce('ten')}"
     return assert_telegram_html(
         f"{ce('layers')} <b>Отрисовка мокапа</b>\n"
         f"Сейчас: <b>{html.escape(summary)}</b>\n"
-        f"Фон: {ce_digit(bg) if bg < 10 else ce('ten')}\n\n"
+        f"{bg_line}\n\n"
         f"{nums}\n"
-        f"Выберите фон 1–10 и запустите отрисовку."
+        f"Выберите пресет 1–10, загрузите свой фон или запустите отрисовку."
     )
 
 

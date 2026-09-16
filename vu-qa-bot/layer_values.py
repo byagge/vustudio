@@ -136,6 +136,7 @@ def build_render_payload(
         "fonts": font_fields,
         "portrait_path": portrait_path if mockup.supports_portrait else None,
         "portrait": portrait_job_payload(portrait_path if mockup.supports_portrait else None),
+        "custom_background_path": opts.custom_background_path if mockup.supports_background else None,
     }
 
 

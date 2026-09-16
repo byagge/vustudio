@@ -108,6 +108,7 @@ def prepare_substitute_job(
     background: int = 1,
     portrait_path: str | None = None,
     generate_portrait: bool = False,
+    custom_background_path: str | None = None,
     output_dir: Path | None = None,
     job_id: str | None = None,
 ) -> tuple[dict[str, Any], Path]:
@@ -124,6 +125,7 @@ def prepare_substitute_job(
         background=background,
         portrait_path=portrait_path,
         generate_portrait=generate_portrait,
+        custom_background_path=custom_background_path,
     ).normalized()
 
     task = RenderTask.create(text_block, options=opts)
@@ -154,6 +156,7 @@ def substitute_text(
     background: int = 1,
     portrait_path: str | None = None,
     generate_portrait: bool = False,
+    custom_background_path: str | None = None,
     output_dir: Path | None = None,
     dry_run: bool = False,
 ) -> SubstituteResult:
@@ -189,6 +192,7 @@ def substitute_text(
         background=background,
         portrait_path=portrait_path,
         generate_portrait=generate_portrait,
+        custom_background_path=custom_background_path,
     ).normalized()
 
     task = RenderTask.create(text_block, options=opts)
@@ -202,6 +206,7 @@ def substitute_text(
             background=background,
             portrait_path=portrait_path,
             generate_portrait=generate_portrait,
+            custom_background_path=custom_background_path,
             output_dir=output_dir,
             job_id=task.job_id,
         )
@@ -278,6 +283,7 @@ def substitute_text_queued(
     background: int = 1,
     portrait_path: str | None = None,
     generate_portrait: bool = False,
+    custom_background_path: str | None = None,
     chat_id: int | None = None,
     user_id: int | None = None,
 ) -> SubstituteResult:
@@ -295,6 +301,7 @@ def substitute_text_queued(
         background=background,
         portrait_path=portrait_path,
         generate_portrait=generate_portrait,
+        custom_background_path=custom_background_path,
     ).normalized()
     from mockup_scene import validate_scene_options
 

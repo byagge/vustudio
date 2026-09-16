@@ -222,7 +222,7 @@
       <!-- ===== RENDER ===== -->
       <section id="page-render" class="page">
         <header class="page-head"><h1>Отрисовка</h1></header>
-        <p class="lede">Подстановка данных в мокап: рука, фон 1–10, портрет.</p>
+        <p class="lede">Подстановка данных в мокап: рука, фон 1–10 или свой, портрет.</p>
 
         <div class="card">
           <form id="renderForm" class="grid-2">
@@ -237,6 +237,11 @@
             <div class="field span-2" id="bgField">
               <span class="lbl">Фон <span class="lbl-hint" id="bgHint"></span></span>
               <div class="sel" id="selBackground"></div>
+              <div class="file-drop bg-custom-drop hidden" id="bgCustomDrop">
+                <span class="ic dim" data-icon="upload" data-icon-size="18"></span>
+                <span id="bgFileName">Перетащите фон сюда или нажмите для выбора</span>
+                <input type="file" accept="image/jpeg,image/png,image/webp" id="bgFile">
+              </div>
             </div>
             <label class="switch-row span-2">
               <input type="checkbox" id="genPortrait">

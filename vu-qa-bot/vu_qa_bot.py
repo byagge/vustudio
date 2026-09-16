@@ -35,6 +35,7 @@ from config import Settings
 from formatter import BANNER, format_client_block, format_debug_block, record_to_json, render_html
 from mockup_registry import MOCKUPS, coerce_panel_mockup
 from mockup_scene import normalize_options_for_mockup, scene_summary
+from background_service import background_status_label, prepare_upload as prepare_background_upload
 from portrait_service import generate_ai_portrait, portrait_status_label, prepare_upload
 from photoshop_text import substitute_text_queued, wait_substitute
 from render_models import RenderOptions
@@ -58,8 +59,10 @@ ME_HINT = tg_ui.generate_hint_text()
 log = logging.getLogger("vu_qa_bot")
 _last_record: dict[int, LicenceRecord] = {}
 _awaiting_photo: set[int] = set()
+_awaiting_background: set[int] = set()
 _awaiting_render: set[int] = set()
 _awaiting_identity: set[int] = set()
+_photo_mode: dict[int, str] = {}
 JOBS_PER_PAGE = 8
 TG_FILE_MAX = 49 * 1024 * 1024
 _DEFAULT_PORTRAIT_FIELDS = {
@@ -74,6 +77,7 @@ _DEFAULT_PORTRAIT_FIELDS = {
 class RenderDraft:
     text_block: str
     options: RenderOptions = field(default_factory=RenderOptions)
+    replace_job_id: str | None = None
 
 
 _drafts: dict[int, RenderDraft] = {}
@@ -106,17 +110,20 @@ def birthplace_kb(page: int = 0) -> InlineKeyboardMarkup:
     return tg_ui.birthplace_kb(page, BIRTH_PLACES)
 
 
-def render_options_kb(opts: RenderOptions) -> InlineKeyboardMarkup:
+def render_options_kb(opts: RenderOptions, *, replace_job_id: str | None = None) -> InlineKeyboardMarkup:
     return tg_ui.render_options_kb(
         opts.background,
         bool(opts.generate_portrait or opts.portrait_path),
+        custom_bg=bool(opts.custom_background_path),
+        replace_job_id=replace_job_id,
     )
 
 
 def _portrait_caption(opts: RenderOptions) -> str:
     st = portrait_status_label(opts)
     mockup_title = MOCKUPS[opts.mockup].title
-    return f"Мокап: <b>{html.escape(mockup_title)}</b>, фон #{opts.background}\nПортрет: {html.escape(st)}"
+    bg = background_status_label(opts)
+    return f"Мокап: <b>{html.escape(mockup_title)}</b>, фон: {html.escape(bg)}\nПортрет: {html.escape(st)}"
 
 
 async def _generate_portrait_preview(msg: Message, draft: RenderDraft | None, uid: int) -> bool:
@@ -158,8 +165,12 @@ async def _generate_portrait_preview(msg: Message, draft: RenderDraft | None, ui
     if (draft.text_block or "").strip():
         await _send_html(
             msg,
-            tg_ui.render_prompt_text(scene_summary(draft.options), draft.options.background),
-            reply_markup=render_options_kb(draft.options),
+            tg_ui.render_prompt_text(
+                scene_summary(draft.options),
+                draft.options.background,
+                custom_bg=bool(draft.options.custom_background_path),
+            ),
+            reply_markup=render_options_kb(draft.options, replace_job_id=draft.replace_job_id),
         )
     else:
         await _send_html(
@@ -220,6 +231,55 @@ def _set_draft(uid: int, text_block: str) -> RenderDraft:
     draft.text_block = text_block
     _drafts[uid] = draft
     return draft
+
+
+def _draft_from_job(job_id: str) -> RenderDraft | None:
+    task = _job_task(job_id)
+    if not task or not (task.text_block or "").strip():
+        return None
+    opts = task.options.normalized()
+    return RenderDraft(text_block=task.text_block, options=opts, replace_job_id=job_id)
+
+
+def _render_options_text(draft: RenderDraft) -> str:
+    return tg_ui.render_prompt_text(
+        scene_summary(draft.options),
+        draft.options.background,
+        custom_bg=bool(draft.options.custom_background_path),
+    )
+
+
+async def _apply_background_upload(msg: Message, uid: int, data: bytes) -> None:
+    result = await asyncio.to_thread(prepare_background_upload, data, uid)
+    if not result.ok or not result.path:
+        await _send_html(
+            msg,
+            f"{tg_ui.ce('stop')} {html.escape(result.message or 'Ошибка загрузки фона')}",
+            reply_markup=tg_ui.back_only_kb(),
+        )
+        return
+    draft = _drafts.get(uid)
+    if draft is None:
+        draft = RenderDraft(text_block="")
+    draft.options.custom_background_path = str(result.path)
+    draft.options.mockup = coerce_panel_mockup(draft.options.mockup)
+    _drafts[uid] = draft
+    _awaiting_background.discard(uid)
+    _photo_mode.pop(uid, None)
+    await _send_photo(
+        msg,
+        FSInputFile(str(result.path)),
+        f"{tg_ui.ce('ok')} {html.escape(result.message or 'Фон загружен')}",
+    )
+    if draft.text_block.strip():
+        extra = ""
+        if draft.replace_job_id:
+            extra = f"\n{tg_ui.ce('info')} Нажмите «Отрисовать» — пересоберём ВУ с новым фоном."
+        await _send_html(
+            msg,
+            _render_options_text(draft) + extra,
+            reply_markup=render_options_kb(draft.options, replace_job_id=draft.replace_job_id),
+        )
 
 
 async def show_main_menu(msg: Message, settings: Settings, *, edit: bool = False) -> None:
@@ -323,17 +383,23 @@ async def _show_job(msg: Message, job_id: str) -> None:
     jpg_ok = bool(task.jpg_path and Path(task.jpg_path).is_file())
     jpg_back_ok = bool(getattr(task, "jpg_back_path", None) and Path(task.jpg_back_path).is_file())
     psd_ok = bool(task.psd_path and Path(task.psd_path).is_file())
+    bg_label = background_status_label(task.options)
     text = tg_ui.job_detail_text(
         job_id=task.job_id,
         status=task.status,
         title=title,
         mockup=str(task.options.mockup),
-        background=task.options.background,
+        background=bg_label,
         error=task.error,
         fields=fields,
     )
+    can_swap = task.status == "done" and str(task.options.mockup) in {"hand", "original"}
     await _edit_or_send(msg, text, tg_ui.job_detail_kb(
-        task.job_id, has_jpg=jpg_ok, has_jpg_back=jpg_back_ok, has_psd=psd_ok
+        task.job_id,
+        has_jpg=jpg_ok,
+        has_jpg_back=jpg_back_ok,
+        has_psd=psd_ok,
+        can_swap_bg=can_swap,
     ))
 
 
@@ -405,11 +471,10 @@ async def _send_job_file(msg: Message, job_id: str, kind: str, *, web_base: str 
 async def _prompt_render_options(msg: Message, text_block: str, uid: int) -> None:
     draft = _set_draft(uid, text_block)
     draft.options.mockup = coerce_panel_mockup(draft.options.mockup)
-    summary = scene_summary(draft.options)
     await _send_html(
         msg,
-        tg_ui.render_prompt_text(summary, draft.options.background),
-        reply_markup=render_options_kb(draft.options),
+        _render_options_text(draft),
+        reply_markup=render_options_kb(draft.options, replace_job_id=draft.replace_job_id),
     )
 
 
@@ -427,6 +492,7 @@ async def _enqueue_and_wait(
         background=draft.options.background,
         portrait_path=draft.options.portrait_path,
         generate_portrait=draft.options.generate_portrait,
+        custom_background_path=draft.options.custom_background_path,
         chat_id=chat_id,
         user_id=user_id,
     )
@@ -474,7 +540,11 @@ async def _enqueue_and_wait(
             f"{tg_ui.ce('folder')} PSD (редактируемый)",
             web_base=web_base,
         )
-    await _send_html(msg, f"{tg_ui.ce('ok')} Готово", reply_markup=tg_ui.after_render_kb(web_base))
+    await _send_html(
+        msg,
+        f"{tg_ui.ce('ok')} Готово",
+        reply_markup=tg_ui.after_render_kb(web_base, job_id=queued.job_id),
+    )
 
 
 async def deliver_record(msg: Message, rec: LicenceRecord, where: str, user_id: int) -> None:
@@ -559,6 +629,8 @@ def create_dispatcher(settings: Settings) -> Dispatcher:
         _awaiting_identity.discard(uid)
         _awaiting_render.discard(uid)
         _awaiting_photo.discard(uid)
+        _awaiting_background.discard(uid)
+        _photo_mode.pop(uid, None)
         await cq.answer()
         await show_main_menu(cq.message, settings, edit=True)
 
@@ -788,13 +860,17 @@ def create_dispatcher(settings: Settings) -> Dispatcher:
         if not msg.photo:
             return
         uid = msg.from_user.id
-        _awaiting_photo.discard(uid)
         photo = msg.photo[-1]
         file = await msg.bot.get_file(photo.file_id)
         from io import BytesIO
 
         buf = BytesIO()
         await msg.bot.download_file(file.file_path, buf)
+        if uid in _awaiting_background or _photo_mode.get(uid) in {"background", "background_replace"}:
+            await _send_html(msg, f"{tg_ui.ce('clock')} Сохраняю фон…")
+            await _apply_background_upload(msg, uid, buf.getvalue())
+            return
+        _awaiting_photo.discard(uid)
         await _send_html(msg, f"{tg_ui.ce('clock')} Прогоняю фото через ИИ (вырезаю фон)…")
         draft = _drafts.get(uid)
         fields = dict(_DEFAULT_PORTRAIT_FIELDS)
@@ -833,8 +909,8 @@ def create_dispatcher(settings: Settings) -> Dispatcher:
         if draft.text_block.strip():
             await _send_html(
                 msg,
-                tg_ui.render_prompt_text(scene_summary(draft.options), draft.options.background),
-                reply_markup=render_options_kb(draft.options),
+                _render_options_text(draft),
+                reply_markup=render_options_kb(draft.options, replace_job_id=draft.replace_job_id),
             )
 
     @dp.message(F.text.func(_looks_like_vu_block))
@@ -854,7 +930,21 @@ def create_dispatcher(settings: Settings) -> Dispatcher:
     @dp.message(F.document)
     async def on_document_block(msg: Message) -> None:
         doc = msg.document
-        if not doc or not (doc.file_name or "").lower().endswith(".txt"):
+        if not doc:
+            return
+        uid = msg.from_user.id
+        name = (doc.file_name or "").lower()
+        if name.endswith((".jpg", ".jpeg", ".png", ".webp")):
+            if uid in _awaiting_background or _photo_mode.get(uid) in {"background", "background_replace"}:
+                file = await msg.bot.get_file(doc.file_id)
+                from io import BytesIO
+
+                buf = BytesIO()
+                await msg.bot.download_file(file.file_path, buf)
+                await _send_html(msg, f"{tg_ui.ce('clock')} Сохраняю фон…")
+                await _apply_background_upload(msg, uid, buf.getvalue())
+            return
+        if not name.endswith(".txt"):
             return
         file = await msg.bot.get_file(doc.file_id)
         from io import BytesIO
@@ -934,7 +1024,43 @@ def create_dispatcher(settings: Settings) -> Dispatcher:
         draft.options.mockup = coerce_panel_mockup(cq.data.split(":", 1)[1])
         draft.options = normalize_options_for_mockup(draft.options)
         await cq.answer("Рука + фон")
-        await cq.message.edit_reply_markup(reply_markup=render_options_kb(draft.options))
+        await cq.message.edit_reply_markup(
+            reply_markup=render_options_kb(draft.options, replace_job_id=draft.replace_job_id)
+        )
+
+    @dp.callback_query(F.data.startswith("jf:"))
+    async def cb_job_bg_swap(cq: CallbackQuery) -> None:
+        uid = cq.from_user.id
+        arg = cq.data.split(":", 1)[1]
+        if arg.startswith("cancel:"):
+            draft = _drafts.get(uid)
+            if draft:
+                draft.replace_job_id = None
+            _photo_mode.pop(uid, None)
+            _awaiting_background.discard(uid)
+            await cq.answer("Отменено")
+            if draft and draft.text_block.strip():
+                await _edit_or_send(
+                    cq.message,
+                    _render_options_text(draft),
+                    render_options_kb(draft.options),
+                )
+            return
+        draft = _draft_from_job(arg)
+        if not draft:
+            await cq.answer("Задача не найдена", show_alert=True)
+            return
+        if draft.options.mockup not in {"hand", "original"}:
+            draft.options.mockup = coerce_panel_mockup("hand")
+        _drafts[uid] = draft
+        await cq.answer("Выберите новый фон")
+        await _edit_or_send(
+            cq.message,
+            f"{tg_ui.ce('folder')} <b>Смена фона</b>\n"
+            f"Задача <code>{html.escape(arg)}</code>\n\n"
+            + _render_options_text(draft),
+            render_options_kb(draft.options, replace_job_id=draft.replace_job_id),
+        )
 
     @dp.callback_query(F.data.startswith("rb:"))
     async def cb_background(cq: CallbackQuery) -> None:
@@ -944,13 +1070,25 @@ def create_dispatcher(settings: Settings) -> Dispatcher:
             await cq.answer("Нет черновика", show_alert=True)
             return
         draft.options.mockup = coerce_panel_mockup(draft.options.mockup)
-        draft.options.background = int(cq.data.split(":", 1)[1])
+        choice = cq.data.split(":", 1)[1]
+        if choice == "custom":
+            _awaiting_background.add(uid)
+            _photo_mode[uid] = "background_replace" if draft.replace_job_id else "background"
+            await cq.answer("Пришлите фото фона")
+            await _send_html(
+                cq.message,
+                f"{tg_ui.ce('folder')} <b>Свой фон</b>\n"
+                "Отправьте изображение фона (фото или файл JPG/PNG).",
+                reply_markup=render_options_kb(draft.options, replace_job_id=draft.replace_job_id),
+            )
+            return
+        draft.options.custom_background_path = None
+        draft.options.background = int(choice)
         await cq.answer(f"Фон #{draft.options.background}")
-        summary = scene_summary(draft.options)
         await _edit_or_send(
             cq.message,
-            tg_ui.render_prompt_text(summary, draft.options.background),
-            render_options_kb(draft.options),
+            _render_options_text(draft),
+            render_options_kb(draft.options, replace_job_id=draft.replace_job_id),
         )
 
     @dp.callback_query(F.data == "rp:ai")

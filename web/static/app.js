@@ -48,6 +48,9 @@ let lastLoadAt = 0;
 let jobFilter = "";
 let cachedJobs = [];
 let selRegion, selMockup, selBackground;
+let customBackgroundPath = null;
+let customBgPreviewUrl = null;
+let bgPresetOptions = [];
 
 const $ = (id) => document.getElementById(id);
 const icon = (n, s) => (window.Icons ? Icons.svg(n, s || 16) : "");
@@ -324,9 +327,12 @@ function VuSelect(host, cfg) {
           const on = String(o.value) === String(state.value);
           const inner = o.thumb
             ? `<img src="${esc(o.thumb)}" alt="" loading="lazy">`
-            : `<span>${esc(o.short || o.value)}</span>`;
+            : o.isCustom
+              ? `<span class="ic">${icon("upload", 20)}</span>`
+              : `<span>${esc(o.short || o.value)}</span>`;
           const empty = o.thumb ? "" : " empty";
-          return `<div class="sel-tile ${on ? "sel-on" : ""} ${i === state.cursor ? "cursor" : ""}" data-v="${esc(o.value)}">
+          const extra = o.isCustom ? " sel-tile-custom" : "";
+          return `<div class="sel-tile${extra} ${on ? "sel-on" : ""} ${i === state.cursor ? "cursor" : ""}" data-v="${esc(o.value)}">
             <div class="sel-thumb${empty}">${inner}</div>
             <div class="sel-tile-cap">${esc(o.label)}</div>
           </div>`;
@@ -981,6 +987,93 @@ const mockupLabel = (v) => MOCKUP_LABELS[v] || MOCKUPS.find((m) => m.value === v
 
 let bgPoll = null;
 
+function customBgOption() {
+  return {
+    value: "custom",
+    label: "Свой фон",
+    short: "+",
+    hint: "JPG / PNG — перетащите или выберите файл",
+    isCustom: true,
+    thumb: customBgPreviewUrl || null,
+  };
+}
+
+function refreshBackgroundOptions() {
+  if (!selBackground) return;
+  selBackground.setOptions([...bgPresetOptions, customBgOption()]);
+}
+
+function syncBgCustomUI() {
+  const isCustom = selBackground?.getValue() === "custom";
+  const drop = $("bgCustomDrop");
+  drop?.classList.toggle("hidden", !isCustom);
+  if (!isCustom) {
+    customBackgroundPath = null;
+    if (customBgPreviewUrl) {
+      URL.revokeObjectURL(customBgPreviewUrl);
+      customBgPreviewUrl = null;
+    }
+    if (drop) {
+      drop.classList.remove("has-file");
+      $("bgFileName").textContent = "Перетащите фон сюда или нажмите для выбора";
+      const inp = $("bgFile");
+      if (inp) inp.value = "";
+    }
+    refreshBackgroundOptions();
+  }
+  saveForm();
+}
+
+async function uploadBackgroundFile(file) {
+  if (!file) return;
+  toast("Загружаю фон…", "ok");
+  const form = new FormData();
+  form.append("file", file);
+  const h = {};
+  const k = apiKey();
+  if (k) h["X-API-Key"] = k;
+  const up = await fetch("/api/v1/background/upload", { method: "POST", headers: h, body: form });
+  const ud = await up.json();
+  if (!up.ok) throw new Error(ud.detail || "Ошибка загрузки фона");
+  customBackgroundPath = ud.background_path;
+  if (customBgPreviewUrl) URL.revokeObjectURL(customBgPreviewUrl);
+  customBgPreviewUrl = URL.createObjectURL(file);
+  $("bgFileName").textContent = file.name;
+  $("bgCustomDrop").classList.add("has-file");
+  selBackground.setValue("custom");
+  refreshBackgroundOptions();
+  syncBgCustomUI();
+  toast("Фон загружен", "ok");
+}
+
+function setupFileDrop(el, input, onPick) {
+  if (!el || !input) return;
+  el.addEventListener("click", (e) => {
+    if (e.target === input) return;
+    input.click();
+  });
+  input.addEventListener("change", () => {
+    const f = input.files?.[0];
+    if (f) onPick(f);
+  });
+  ["dragenter", "dragover"].forEach((ev) =>
+    el.addEventListener(ev, (e) => {
+      e.preventDefault();
+      el.classList.add("drag-over");
+    })
+  );
+  ["dragleave", "drop"].forEach((ev) =>
+    el.addEventListener(ev, (e) => {
+      e.preventDefault();
+      el.classList.remove("drag-over");
+    })
+  );
+  el.addEventListener("drop", (e) => {
+    const f = e.dataTransfer?.files?.[0];
+    if (f && f.type.startsWith("image/")) onPick(f);
+  });
+}
+
 async function loadBackgrounds({ startExtract = true } = {}) {
   let items = Array.from({ length: 10 }, (_, i) => ({ id: i + 1, layer_name: `Вариант ${i + 1}`, has_preview: false, updated: 0 }));
   try {
@@ -1010,17 +1103,24 @@ async function loadBackgrounds({ startExtract = true } = {}) {
     }
   }
 
-  selBackground.setOptions(
-    items.map((b) => ({
-      value: String(b.id),
-      label: `Фон ${b.id}`,
-      short: String(b.id),
-      hint: b.layer_name,
-      thumb: b.has_preview ? `/api/v1/mockups/backgrounds/${b.id}/preview?v=${b.updated || 1}` : null,
-    }))
-  );
+  bgPresetOptions = items.map((b) => ({
+    value: String(b.id),
+    label: `Фон ${b.id}`,
+    short: String(b.id),
+    hint: b.layer_name,
+    thumb: b.has_preview ? `/api/v1/mockups/backgrounds/${b.id}/preview?v=${b.updated || 1}` : null,
+  }));
+  refreshBackgroundOptions();
   const saved = readJSON(STORE.form, null);
-  if (saved?.background) selBackground.setValue(String(saved.background));
+  if (saved?.background) {
+    selBackground.setValue(String(saved.background));
+    if (saved.background === "custom" && saved.customBackgroundPath) {
+      customBackgroundPath = saved.customBackgroundPath;
+      $("bgFileName").textContent = "Свой фон (загружен ранее)";
+      $("bgCustomDrop").classList.add("has-file");
+    }
+    syncBgCustomUI();
+  }
 }
 
 function saveForm() {
@@ -1028,6 +1128,7 @@ function saveForm() {
     text: $("renderText").value || "",
     mockup: "hand",
     background: selBackground?.getValue() || "1",
+    customBackgroundPath: customBackgroundPath || "",
     portrait: $("genPortrait").checked,
   });
 }
@@ -1043,10 +1144,17 @@ function syncMockup() {
 $("renderText").addEventListener("input", saveForm);
 $("genPortrait").addEventListener("change", saveForm);
 
-$("portraitFile").addEventListener("change", (e) => {
-  const f = e.target.files?.[0];
-  $("fileName").textContent = f ? f.name : "Перетащите файл или нажмите для выбора";
-  $("fileDrop").classList.toggle("has-file", !!f);
+setupFileDrop($("fileDrop"), $("portraitFile"), (f) => {
+  $("fileName").textContent = f.name;
+  $("fileDrop").classList.add("has-file");
+});
+
+setupFileDrop($("bgCustomDrop"), $("bgFile"), async (f) => {
+  try {
+    await uploadBackgroundFile(f);
+  } catch (err) {
+    toast(err.message, "bad");
+  }
 });
 
 /* ============ JOBS ============ */
@@ -1471,12 +1579,19 @@ $("renderForm").addEventListener("submit", async (e) => {
       portraitPath = ud.portrait_path;
     }
 
+    const bgVal = selBackground.getValue() || "1";
+    const isCustomBg = bgVal === "custom";
+    if (isCustomBg && !customBackgroundPath) {
+      throw new Error("Загрузите свой фон или выберите пресет 1–10");
+    }
+
     const body = {
       text_block: $("renderText").value,
       mockup: "hand",
-      background: Number(selBackground.getValue() || 1),
+      background: isCustomBg ? 1 : Number(bgVal),
       generate_portrait: $("genPortrait").checked,
       portrait_path: portraitPath,
+      custom_background_path: isCustomBg ? customBackgroundPath : null,
       wait: false,
     };
 
@@ -1651,7 +1766,13 @@ $("clearLocal").addEventListener("click", () => {
     placeholder: "Выберите фон",
     value: "1",
     options: [],
-    onChange: saveForm,
+    onChange: (v) => {
+      if (v !== "custom") syncBgCustomUI();
+      else {
+        $("bgCustomDrop")?.classList.remove("hidden");
+        saveForm();
+      }
+    },
   });
 
   const savedKey = localStorage.getItem(STORE.key);
