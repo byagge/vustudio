@@ -52,6 +52,7 @@ from .schemas import (
     BackgroundItem,
     BackgroundListResponse,
     BackgroundPreviewItem,
+    BackgroundUploadResponse,
     DatasetRequest,
     DatasetResponse,
     EvaluateRequest,
@@ -62,11 +63,11 @@ from .schemas import (
     MockupsResponse,
     PortraitGenerateRequest,
     PortraitGenerateResponse,
-    BackgroundUploadResponse,
     PortraitUploadResponse,
     QueueJobItem,
     QueueJobsResponse,
     QueueStatsResponse,
+    RebackgroundRequest,
     RegionItem,
     RenderRequest,
     RenderResponse,
@@ -289,25 +290,6 @@ def create_app() -> FastAPI:
             ),
         )
 
-    @app.post("/api/v1/background/upload", response_model=BackgroundUploadResponse)
-    async def background_upload(file: UploadFile = File(...), _: None = Depends(auth)):
-        import asyncio
-        import uuid
-
-        from background_service import prepare_upload
-
-        data = await file.read()
-        if len(data) < 100:
-            raise HTTPException(400, "Файл слишком мал")
-        result = await asyncio.to_thread(prepare_upload, data, f"web_{uuid.uuid4().hex[:12]}")
-        if not result.ok:
-            raise HTTPException(400, result.message)
-        return BackgroundUploadResponse(
-            ok=True,
-            background_path=result.path_str or "",
-            message=result.message,
-        )
-
     @app.post("/api/v1/portrait/upload", response_model=PortraitUploadResponse)
     async def portrait_upload(file: UploadFile = File(...), _: None = Depends(auth)):
         import asyncio
@@ -331,6 +313,28 @@ def create_app() -> FastAPI:
             message=result.message,
         )
 
+    @app.post("/api/v1/background/upload", response_model=BackgroundUploadResponse)
+    async def background_upload(file: UploadFile = File(...), _: None = Depends(auth)):
+        import asyncio
+        import uuid
+
+        from background_service import prepare_upload as prepare_background_upload
+
+        data = await file.read()
+        if len(data) < 100:
+            raise HTTPException(400, "Файл слишком мал")
+        suffix = Path(file.filename or "bg.jpg").suffix or ".jpg"
+        result = await asyncio.to_thread(
+            prepare_background_upload, data, f"web_{uuid.uuid4().hex[:12]}", suffix=suffix
+        )
+        if not result.ok:
+            raise HTTPException(400, result.message)
+        return BackgroundUploadResponse(
+            ok=True,
+            background_path=result.path_str or "",
+            message=result.message,
+        )
+
     @app.post("/api/v1/render", response_model=RenderResponse)
     async def render_mockup(body: RenderRequest, _: None = Depends(auth)):
         from photoshop_server import get_server_status, is_server_mode
@@ -343,13 +347,80 @@ def create_app() -> FastAPI:
                     "Render-worker offline. Запустите render_worker.py на Windows.",
                 )
 
+        custom_bg = (body.custom_background_path or "").strip() or None
+        if custom_bg and not Path(custom_bg).is_file():
+            raise HTTPException(400, "Файл своего фона не найден — загрузите снова")
+
         queued = substitute_text_queued(
             body.text_block,
             mockup="hand",
             background=body.background,
             portrait_path=body.portrait_path,
             generate_portrait=body.generate_portrait,
-            custom_background_path=body.custom_background_path,
+            custom_background_path=custom_bg,
+        )
+        if not queued.ok:
+            raise HTTPException(400, queued.message)
+
+        if body.wait:
+            import asyncio
+
+            done = await asyncio.to_thread(wait_substitute, queued.job_id, 120, 1.0)
+            if done.ok:
+                return RenderResponse(
+                    job_id=done.job_id,
+                    status="done",
+                    message=done.message,
+                    fields=done.fields,
+                    psd_path=str(done.psd_path) if done.psd_path else None,
+                    jpg_path=str(done.jpg_path) if done.jpg_path else None,
+                    jpg_back_path=str(done.jpg_back_path) if getattr(done, "jpg_back_path", None) else None,
+                )
+            raise HTTPException(503, done.message)
+
+        return RenderResponse(
+            job_id=queued.job_id,
+            status="pending",
+            message=queued.message,
+            fields=queued.fields,
+        )
+
+    @app.post("/api/v1/render/{job_id}/background", response_model=RenderResponse)
+    async def render_rebackground(job_id: str, body: RebackgroundRequest, _: None = Depends(auth)):
+        """Пересобрать готовое ВУ с другим фоном (пресет или свой)."""
+        from photoshop_server import get_server_status, is_server_mode, queue_dir
+        from render_queue import RenderQueue
+
+        task = RenderQueue(queue_dir()).get(job_id)
+        if not task:
+            raise HTTPException(404, "Job not found")
+        if not (task.text_block or "").strip():
+            raise HTTPException(400, "В задаче нет блока полей для пересборки")
+
+        custom_bg = (body.custom_background_path or "").strip() or None
+        if custom_bg and not Path(custom_bg).is_file():
+            raise HTTPException(400, "Файл своего фона не найден — загрузите снова")
+        if custom_bg is None and body.background is None:
+            raise HTTPException(400, "Укажите background или custom_background_path")
+        bg = body.background if body.background is not None else int(task.options.background or 1)
+
+        if body.wait and is_server_mode():
+            st = get_server_status()
+            if not st.worker_alive and st.queue.processing:
+                raise HTTPException(
+                    503,
+                    "Render-worker offline. Запустите render_worker.py на Windows.",
+                )
+
+        queued = substitute_text_queued(
+            task.text_block,
+            mockup="hand",
+            background=bg,
+            portrait_path=task.options.portrait_path,
+            generate_portrait=False,
+            custom_background_path=custom_bg,
+            chat_id=task.chat_id,
+            user_id=task.user_id,
         )
         if not queued.ok:
             raise HTTPException(400, queued.message)

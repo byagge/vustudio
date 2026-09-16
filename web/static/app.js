@@ -48,9 +48,6 @@ let lastLoadAt = 0;
 let jobFilter = "";
 let cachedJobs = [];
 let selRegion, selMockup, selBackground;
-let customBackgroundPath = null;
-let customBgPreviewUrl = null;
-let bgPresetOptions = [];
 
 const $ = (id) => document.getElementById(id);
 const icon = (n, s) => (window.Icons ? Icons.svg(n, s || 16) : "");
@@ -315,6 +312,7 @@ function VuSelect(host, cfg) {
 
   function swatchHtml(o) {
     if (o.thumb) return `<span class="sel-swatch"><img src="${esc(o.thumb)}" alt=""></span>`;
+    if (o.custom) return `<span class="sel-swatch" style="display:flex;align-items:center;justify-content:center">${icon("upload", 14)}</span>`;
     return `<span class="sel-swatch" style="background:${o.color || "#333"}"></span>`;
   }
 
@@ -325,14 +323,17 @@ function VuSelect(host, cfg) {
       list.innerHTML = items
         .map((o, i) => {
           const on = String(o.value) === String(state.value);
-          const inner = o.thumb
-            ? `<img src="${esc(o.thumb)}" alt="" loading="lazy">`
-            : o.isCustom
-              ? `<span class="ic">${icon("upload", 20)}</span>`
-              : `<span>${esc(o.short || o.value)}</span>`;
-          const empty = o.thumb ? "" : " empty";
-          const extra = o.isCustom ? " sel-tile-custom" : "";
-          return `<div class="sel-tile${extra} ${on ? "sel-on" : ""} ${i === state.cursor ? "cursor" : ""}" data-v="${esc(o.value)}">
+          const customCls = o.custom ? " custom" : "";
+          let inner;
+          if (o.thumb) {
+            inner = `<img src="${esc(o.thumb)}" alt="" loading="lazy">`;
+          } else if (o.custom) {
+            inner = `<span class="ic">${icon("upload", 18)}</span>`;
+          } else {
+            inner = `<span>${esc(o.short || o.value)}</span>`;
+          }
+          const empty = o.thumb || o.custom ? "" : " empty";
+          return `<div class="sel-tile${customCls} ${on ? "sel-on" : ""} ${i === state.cursor ? "cursor" : ""}" data-v="${esc(o.value)}">
             <div class="sel-thumb${empty}">${inner}</div>
             <div class="sel-tile-cap">${esc(o.label)}</div>
           </div>`;
@@ -987,93 +988,6 @@ const mockupLabel = (v) => MOCKUP_LABELS[v] || MOCKUPS.find((m) => m.value === v
 
 let bgPoll = null;
 
-function customBgOption() {
-  return {
-    value: "custom",
-    label: "Свой фон",
-    short: "+",
-    hint: "JPG / PNG — перетащите или выберите файл",
-    isCustom: true,
-    thumb: customBgPreviewUrl || null,
-  };
-}
-
-function refreshBackgroundOptions() {
-  if (!selBackground) return;
-  selBackground.setOptions([...bgPresetOptions, customBgOption()]);
-}
-
-function syncBgCustomUI() {
-  const isCustom = selBackground?.getValue() === "custom";
-  const drop = $("bgCustomDrop");
-  drop?.classList.toggle("hidden", !isCustom);
-  if (!isCustom) {
-    customBackgroundPath = null;
-    if (customBgPreviewUrl) {
-      URL.revokeObjectURL(customBgPreviewUrl);
-      customBgPreviewUrl = null;
-    }
-    if (drop) {
-      drop.classList.remove("has-file");
-      $("bgFileName").textContent = "Перетащите фон сюда или нажмите для выбора";
-      const inp = $("bgFile");
-      if (inp) inp.value = "";
-    }
-    refreshBackgroundOptions();
-  }
-  saveForm();
-}
-
-async function uploadBackgroundFile(file) {
-  if (!file) return;
-  toast("Загружаю фон…", "ok");
-  const form = new FormData();
-  form.append("file", file);
-  const h = {};
-  const k = apiKey();
-  if (k) h["X-API-Key"] = k;
-  const up = await fetch("/api/v1/background/upload", { method: "POST", headers: h, body: form });
-  const ud = await up.json();
-  if (!up.ok) throw new Error(ud.detail || "Ошибка загрузки фона");
-  customBackgroundPath = ud.background_path;
-  if (customBgPreviewUrl) URL.revokeObjectURL(customBgPreviewUrl);
-  customBgPreviewUrl = URL.createObjectURL(file);
-  $("bgFileName").textContent = file.name;
-  $("bgCustomDrop").classList.add("has-file");
-  selBackground.setValue("custom");
-  refreshBackgroundOptions();
-  syncBgCustomUI();
-  toast("Фон загружен", "ok");
-}
-
-function setupFileDrop(el, input, onPick) {
-  if (!el || !input) return;
-  el.addEventListener("click", (e) => {
-    if (e.target === input) return;
-    input.click();
-  });
-  input.addEventListener("change", () => {
-    const f = input.files?.[0];
-    if (f) onPick(f);
-  });
-  ["dragenter", "dragover"].forEach((ev) =>
-    el.addEventListener(ev, (e) => {
-      e.preventDefault();
-      el.classList.add("drag-over");
-    })
-  );
-  ["dragleave", "drop"].forEach((ev) =>
-    el.addEventListener(ev, (e) => {
-      e.preventDefault();
-      el.classList.remove("drag-over");
-    })
-  );
-  el.addEventListener("drop", (e) => {
-    const f = e.dataTransfer?.files?.[0];
-    if (f && f.type.startsWith("image/")) onPick(f);
-  });
-}
-
 async function loadBackgrounds({ startExtract = true } = {}) {
   let items = Array.from({ length: 10 }, (_, i) => ({ id: i + 1, layer_name: `Вариант ${i + 1}`, has_preview: false, updated: 0 }));
   try {
@@ -1103,24 +1017,35 @@ async function loadBackgrounds({ startExtract = true } = {}) {
     }
   }
 
-  bgPresetOptions = items.map((b) => ({
-    value: String(b.id),
-    label: `Фон ${b.id}`,
-    short: String(b.id),
-    hint: b.layer_name,
-    thumb: b.has_preview ? `/api/v1/mockups/backgrounds/${b.id}/preview?v=${b.updated || 1}` : null,
-  }));
-  refreshBackgroundOptions();
+  selBackground.setOptions(
+    items
+      .map((b) => ({
+        value: String(b.id),
+        label: `Фон ${b.id}`,
+        short: String(b.id),
+        hint: b.layer_name,
+        thumb: b.has_preview ? `/api/v1/mockups/backgrounds/${b.id}/preview?v=${b.updated || 1}` : null,
+      }))
+      .concat([
+        {
+          value: "custom",
+          label: "Свой фон",
+          short: "+",
+          hint: "Загрузить JPG/PNG",
+          custom: true,
+        },
+      ])
+  );
   const saved = readJSON(STORE.form, null);
-  if (saved?.background) {
-    selBackground.setValue(String(saved.background));
-    if (saved.background === "custom" && saved.customBackgroundPath) {
-      customBackgroundPath = saved.customBackgroundPath;
-      $("bgFileName").textContent = "Свой фон (загружен ранее)";
-      $("bgCustomDrop").classList.add("has-file");
-    }
-    syncBgCustomUI();
-  }
+  if (saved?.background) selBackground.setValue(String(saved.background));
+  syncBgCustomUI();
+}
+
+function syncBgCustomUI() {
+  const drop = $("bgCustomDrop");
+  if (!drop || !selBackground) return;
+  const isCustom = selBackground.getValue() === "custom";
+  drop.classList.toggle("hidden", !isCustom);
 }
 
 function saveForm() {
@@ -1128,9 +1053,9 @@ function saveForm() {
     text: $("renderText").value || "",
     mockup: "hand",
     background: selBackground?.getValue() || "1",
-    customBackgroundPath: customBackgroundPath || "",
     portrait: $("genPortrait").checked,
   });
+  syncBgCustomUI();
 }
 
 function syncMockup() {
@@ -1144,18 +1069,53 @@ function syncMockup() {
 $("renderText").addEventListener("input", saveForm);
 $("genPortrait").addEventListener("change", saveForm);
 
-setupFileDrop($("fileDrop"), $("portraitFile"), (f) => {
-  $("fileName").textContent = f.name;
-  $("fileDrop").classList.add("has-file");
+$("portraitFile").addEventListener("change", (e) => {
+  const f = e.target.files?.[0];
+  $("fileName").textContent = f ? f.name : "Перетащите файл или нажмите для выбора";
+  $("fileDrop").classList.toggle("has-file", !!f);
 });
 
-setupFileDrop($("bgCustomDrop"), $("bgFile"), async (f) => {
-  try {
-    await uploadBackgroundFile(f);
-  } catch (err) {
-    toast(err.message, "bad");
-  }
+$("bgFile")?.addEventListener("change", (e) => {
+  const f = e.target.files?.[0];
+  $("bgFileName").textContent = f
+    ? f.name
+    : "Свой фон — перетащите или нажмите (JPG/PNG)";
+  $("bgCustomDrop")?.classList.toggle("has-file", !!f);
 });
+
+["bgCustomDrop", "fileDrop"].forEach((id) => {
+  const el = $(id);
+  if (!el) return;
+  el.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    el.classList.add("drag");
+  });
+  el.addEventListener("dragleave", () => el.classList.remove("drag"));
+  el.addEventListener("drop", (e) => {
+    e.preventDefault();
+    el.classList.remove("drag");
+    const f = e.dataTransfer?.files?.[0];
+    if (!f) return;
+    const input = el.querySelector("input[type=file]");
+    if (!input) return;
+    const dt = new DataTransfer();
+    dt.items.add(f);
+    input.files = dt.files;
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+});
+
+async function uploadBackgroundFile(file) {
+  const form = new FormData();
+  form.append("file", file);
+  const h = {};
+  const k = apiKey();
+  if (k) h["X-API-Key"] = k;
+  const up = await fetch("/api/v1/background/upload", { method: "POST", headers: h, body: form });
+  const ud = await up.json();
+  if (!up.ok) throw new Error(ud.detail || "Ошибка загрузки фона");
+  return ud.background_path;
+}
 
 /* ============ JOBS ============ */
 function syncFilterChips() {
@@ -1207,7 +1167,11 @@ function renderJobsTable(rows) {
   body.innerHTML = rows
     .map((j) => {
       const p = pillFor(j.status);
-      const bg = j.background ? ` · фон ${j.background}` : "";
+      const bg = j.custom_background
+        ? " · свой фон"
+        : j.background
+        ? ` · фон ${j.background}`
+        : "";
       return `<tr data-job="${esc(j.job_id)}">
         <td>
           <div>${esc(j.title || "Без имени")}</div>
@@ -1228,7 +1192,11 @@ function renderJobsTable(rows) {
   cards.innerHTML = rows
     .map((j) => {
       const p = pillFor(j.status);
-      const bg = j.background ? ` · фон ${j.background}` : "";
+      const bg = j.custom_background
+        ? " · свой фон"
+        : j.background
+        ? ` · фон ${j.background}`
+        : "";
       return `<button type="button" class="job-card" data-watch="${esc(j.job_id)}">
         <span class="job-card-top">
           <strong>${esc(j.title || "Без имени")}</strong>
@@ -1303,7 +1271,11 @@ async function openJobModal(jobId) {
   const meta = `<table class="kv">
       <tr><th>Идентификатор</th><td><span class="mono-id">${esc(jobId)}</span></td></tr>
       <tr><th>Мокап</th><td>${esc(mockupLabel(row.mockup || data.mockup))}${
-    row.background ? ` · фон ${esc(row.background)}` : ""
+    row.custom_background
+      ? " · свой фон"
+      : row.background
+      ? ` · фон ${esc(row.background)}`
+      : ""
   }</td></tr>
       <tr><th>Создана</th><td>${esc(fmtTime(row.created_at))}</td></tr>
       <tr><th>Обновлена</th><td>${esc(fmtTime(row.updated_at))}</td></tr>
@@ -1328,7 +1300,8 @@ async function openJobModal(jobId) {
 
   const foot =
     status === "done"
-      ? `<button type="button" class="btn secondary" id="jobDlPsd">Скачать PSD</button>
+      ? `<button type="button" class="btn secondary" id="jobChangeBg">Сменить фон</button>
+         <button type="button" class="btn secondary" id="jobDlPsd">Скачать PSD</button>
          ${guessBackPath(data.jpg_path, data.jpg_back_path) ? `<button type="button" class="btn primary" id="jobDlJpgBack">JPG оборот</button>` : ""}
          <button type="button" class="btn primary" id="jobDlJpg">JPG лицевая</button>`
       : `<button type="button" class="btn secondary" id="jobWatch">Следить за выполнением</button>
@@ -1351,6 +1324,7 @@ async function openJobModal(jobId) {
   $("jobDlJpg")?.addEventListener("click", () => downloadFile(data.jpg_path, "jpg", "preview.jpg"));
   $("jobDlJpgBack")?.addEventListener("click", () => downloadFile(backPath, "jpg", "preview_back.jpg"));
   $("jobDlPsd")?.addEventListener("click", () => downloadFile(data.psd_path, "psb", "vu.psb"));
+  $("jobChangeBg")?.addEventListener("click", () => openChangeBgModal(jobId));
   if (backPath) {
     fetch(`/api/v1/render/download/jpg?path=${encodeURIComponent(backPath)}`, {
       headers: headers(false),
@@ -1366,6 +1340,121 @@ async function openJobModal(jobId) {
     closeModal();
     startPolling(jobId);
     goto("render");
+  });
+}
+
+async function openChangeBgModal(jobId) {
+  let items = Array.from({ length: 10 }, (_, i) => ({
+    id: i + 1,
+    layer_name: `Вариант ${i + 1}`,
+    has_preview: false,
+    updated: 0,
+  }));
+  try {
+    const data = await api("/api/v1/mockups/backgrounds");
+    if (data.backgrounds?.length) items = data.backgrounds;
+  } catch {}
+
+  const tiles = items
+    .map((b) => {
+      const thumb = b.has_preview
+        ? `<img src="/api/v1/mockups/backgrounds/${b.id}/preview?v=${b.updated || 1}" alt="" loading="lazy">`
+        : `<span>${b.id}</span>`;
+      return `<button type="button" class="sel-tile" data-rebg="${b.id}">
+        <div class="sel-thumb${b.has_preview ? "" : " empty"}">${thumb}</div>
+        <div class="sel-tile-cap">Фон ${b.id}</div>
+      </button>`;
+    })
+    .join("");
+
+  const body = `
+    <p class="note">Выберите пресет 1–10 или загрузите свой фон — ВУ пересоберётся с теми же данными.</p>
+    <div class="sel-list grid" id="rebgGrid">${tiles}
+      <button type="button" class="sel-tile custom" data-rebg="custom">
+        <div class="sel-thumb"><span class="ic">${icon("upload", 18)}</span></div>
+        <div class="sel-tile-cap">Свой фон</div>
+      </button>
+    </div>
+    <div class="file-drop hidden mt-sm" id="rebgDrop">
+      <span class="ic dim">${icon("upload", 18)}</span>
+      <span id="rebgFileName">Перетащите или нажмите (JPG/PNG)</span>
+      <input type="file" accept="image/*" id="rebgFile">
+    </div>
+  `;
+  const foot = `<button type="button" class="btn secondary" data-close-modal>Отмена</button>
+    <button type="button" class="btn primary" id="rebgGo" disabled>Пересобрать</button>`;
+
+  openModal("Сменить фон", body, foot);
+
+  let chosen = null;
+  const grid = $("rebgGrid");
+  const drop = $("rebgDrop");
+  const go = $("rebgGo");
+
+  function selectTile(v) {
+    chosen = v;
+    grid.querySelectorAll(".sel-tile").forEach((t) =>
+      t.classList.toggle("sel-on", String(t.dataset.rebg) === String(v))
+    );
+    const isCustom = v === "custom";
+    drop.classList.toggle("hidden", !isCustom);
+    go.disabled = isCustom ? !$("rebgFile")?.files?.length : !v;
+    if (isCustom && !$("rebgFile")?.files?.length) {
+      setTimeout(() => $("rebgFile")?.click(), 60);
+    }
+  }
+
+  grid.querySelectorAll("[data-rebg]").forEach((btn) =>
+    btn.addEventListener("click", () => selectTile(btn.dataset.rebg))
+  );
+
+  $("rebgFile")?.addEventListener("change", (e) => {
+    const f = e.target.files?.[0];
+    $("rebgFileName").textContent = f ? f.name : "Перетащите или нажмите (JPG/PNG)";
+    drop.classList.toggle("has-file", !!f);
+    go.disabled = !(chosen === "custom" && f);
+  });
+
+  drop?.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    drop.classList.add("drag");
+  });
+  drop?.addEventListener("dragleave", () => drop.classList.remove("drag"));
+  drop?.addEventListener("drop", (e) => {
+    e.preventDefault();
+    drop.classList.remove("drag");
+    const f = e.dataTransfer?.files?.[0];
+    if (!f || !$("rebgFile")) return;
+    const dt = new DataTransfer();
+    dt.items.add(f);
+    $("rebgFile").files = dt.files;
+    $("rebgFile").dispatchEvent(new Event("change", { bubbles: true }));
+  });
+
+  go?.addEventListener("click", async () => {
+    go.disabled = true;
+    try {
+      const payload = { wait: false };
+      if (chosen === "custom") {
+        const f = $("rebgFile")?.files?.[0];
+        if (!f) throw new Error("Выберите файл фона");
+        toast("Загружаю фон…", "ok");
+        payload.custom_background_path = await uploadBackgroundFile(f);
+      } else {
+        payload.background = Number(chosen);
+      }
+      const res = await api(`/api/v1/render/${jobId}/background`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      closeModal();
+      toast("Пересборка с новым фоном в очереди");
+      startPolling(res.job_id);
+      goto("render");
+    } catch (err) {
+      toast(err.message, "bad");
+      go.disabled = false;
+    }
   });
 }
 
@@ -1579,21 +1668,24 @@ $("renderForm").addEventListener("submit", async (e) => {
       portraitPath = ud.portrait_path;
     }
 
-    const bgVal = selBackground.getValue() || "1";
-    const isCustomBg = bgVal === "custom";
-    if (isCustomBg && !customBackgroundPath) {
-      throw new Error("Загрузите свой фон или выберите пресет 1–10");
-    }
-
     const body = {
       text_block: $("renderText").value,
       mockup: "hand",
-      background: isCustomBg ? 1 : Number(bgVal),
+      background: 1,
       generate_portrait: $("genPortrait").checked,
       portrait_path: portraitPath,
-      custom_background_path: isCustomBg ? customBackgroundPath : null,
       wait: false,
     };
+
+    const bgVal = selBackground.getValue() || "1";
+    if (bgVal === "custom") {
+      const bgFile = $("bgFile")?.files?.[0];
+      if (!bgFile) throw new Error("Выберите файл своего фона");
+      toast("Загружаю свой фон…", "ok");
+      body.custom_background_path = await uploadBackgroundFile(bgFile);
+    } else {
+      body.background = Number(bgVal) || 1;
+    }
 
     $("renderStatus").hidden = false;
     $("homeJobActions").hidden = true;
@@ -1766,11 +1858,13 @@ $("clearLocal").addEventListener("click", () => {
     placeholder: "Выберите фон",
     value: "1",
     options: [],
-    onChange: (v) => {
-      if (v !== "custom") syncBgCustomUI();
-      else {
-        $("bgCustomDrop")?.classList.remove("hidden");
-        saveForm();
+    onChange: () => {
+      saveForm();
+      if (selBackground.getValue() === "custom") {
+        // сразу открыть выбор файла, если ещё не загружен
+        setTimeout(() => {
+          if (!$("bgFile")?.files?.length) $("bgFile")?.click();
+        }, 80);
       }
     },
   });

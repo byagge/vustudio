@@ -76,9 +76,9 @@ class RenderRequest(BaseModel):
     text_block: str = Field(..., description="Клиентский блок полей ВУ")
     mockup: str = Field("hand", description="hand")
     background: int = Field(1, ge=1, le=10)
+    custom_background_path: str | None = None
     portrait_path: str | None = None
     generate_portrait: bool = False
-    custom_background_path: str | None = None
     wait: bool = Field(True, description="Ждать завершения worker (до 120 сек)")
 
     @field_validator("mockup")
@@ -169,6 +169,7 @@ class QueueJobItem(BaseModel):
     status: str
     mockup: str | None = None
     background: int | None = None
+    custom_background: bool = False
     created_at: str = ""
     updated_at: str = ""
     title: str = ""
@@ -221,6 +222,12 @@ class BackgroundUploadResponse(BaseModel):
     ok: bool
     background_path: str
     message: str = ""
+
+
+class RebackgroundRequest(BaseModel):
+    background: int | None = Field(None, ge=1, le=10)
+    custom_background_path: str | None = None
+    wait: bool = False
 
 
 class DatasetResponse(BaseModel):

@@ -1508,81 +1508,67 @@ var OTRIS_JSX_VERSION = "2026-09-16.1";
         }
     }
 
-    function applyCustomBackground(doc, job) {
-        var imagePath = job.custom_background_path;
-        if (!imagePath) {
-            return false;
-        }
-        var file = new File(imagePath);
-        if (!file.exists) {
-            writeLog(null, "custom background missing: " + imagePath);
-            return false;
+    function applyBackground(doc, job) {
+        if (!job.scene && !job.custom_background_path) {
+            return 0;
         }
         var prefix = (job.scene && job.scene.background_prefix) || "Вариант ";
         var count = (job.scene && job.scene.background_count) || 10;
-        var slot = job.background || 1;
-        var i;
-        for (i = 1; i <= count; i++) {
-            forEachLayerByName(doc, prefix + i, function (layer) {
-                setLayerVisible(layer, false);
-            });
-        }
-        var placed = false;
-        var targetName = prefix + slot;
-        forEachLayerByName(doc, targetName, function (layer) {
-            if (isSmartObject(layer)) {
-                editSmartObject(layer, function (variantDoc) {
-                    var n;
-                    for (n = variantDoc.layers.length - 1; n >= 0; n--) {
-                        try {
-                            variantDoc.layers[n].remove();
-                        } catch (eRm) {}
-                    }
-                    placeImageInDoc(variantDoc, imagePath, false);
-                    scaleActiveLayerCover(variantDoc);
-                    placed = true;
-                }, true);
-            } else {
-                try {
-                    setLayerVisible(layer, true);
-                } catch (eVis) {}
-            }
-        });
-        if (!placed) {
-            placeImageInDoc(doc, imagePath, false);
-            scaleActiveLayerCover(doc);
-            try {
-                doc.activeLayer.name = "Custom BG";
-            } catch (eNm) {}
-            placed = true;
-        } else {
-            forEachLayerByName(doc, targetName, function (layer) {
-                setLayerVisible(layer, true);
-            });
-        }
-        writeLog(null, "custom background slot=" + slot + " in '" + docName(doc) + "'");
-        return placed;
-    }
-
-    function applyBackground(doc, job) {
-        if (!job.scene) {
-            return 0;
-        }
-        if (job.custom_background_path) {
-            return applyCustomBackground(doc, job) ? 1 : 0;
-        }
-        if (!job.background) {
-            return 0;
-        }
-        var prefix = job.scene.background_prefix || "Вариант ";
-        var count = job.scene.background_count || 10;
+        var customPath = job.custom_background_path ? String(job.custom_background_path) : "";
         var found = 0;
-        for (var i = 1; i <= count; i++) {
+        var i;
+        // Пресеты: показать выбранный. Свой фон — скрыть все «Вариант N».
+        for (i = 1; i <= count; i++) {
             var layerName = prefix + i;
             forEachLayerByName(doc, layerName, function (layer) {
                 found++;
-                setLayerVisible(layer, i === job.background);
+                if (customPath) {
+                    setLayerVisible(layer, false);
+                } else {
+                    setLayerVisible(layer, i === job.background);
+                }
             });
+        }
+        // Убрать прошлый custom-слой, если пересобираем документ.
+        forEachLayerByName(doc, "vu_custom_bg", function (layer) {
+            try {
+                layer.remove();
+            } catch (eRm) {
+                try {
+                    setLayerVisible(layer, false);
+                } catch (eHid) {}
+            }
+        });
+        if (customPath) {
+            var file = new File(customPath);
+            if (!file.exists) {
+                writeLog(null, "custom background missing: " + customPath);
+                return found;
+            }
+            try {
+                app.activeDocument = doc;
+            } catch (eAct) {}
+            placeImageInDoc(doc, customPath, false);
+            try {
+                scaleActiveLayerCover(doc);
+            } catch (eCov) {
+                try {
+                    scaleLayerToCanvas(doc);
+                } catch (eFit) {}
+            }
+            try {
+                doc.activeLayer.name = "vu_custom_bg";
+            } catch (eN) {}
+            try {
+                // на задний план под картой/рукой
+                doc.activeLayer.move(doc.layers[doc.layers.length - 1], ElementPlacement.PLACEAFTER);
+            } catch (eMv) {
+                try {
+                    doc.activeLayer.move(doc.layers[doc.layers.length - 1], ElementPlacement.PLACEBEFORE);
+                } catch (eMv2) {}
+            }
+            writeLog(null, "custom background placed in '" + docName(doc) + "'");
+            return found + 1;
         }
         writeLog(null, "background #" + job.background + " in '" + docName(doc) + "' variants=" + found);
         return found;

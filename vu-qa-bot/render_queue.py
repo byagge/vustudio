@@ -118,6 +118,9 @@ class RenderQueue:
                             "status": data.get("status", folder),
                             "mockup": opts.get("mockup"),
                             "background": opts.get("background"),
+                            "custom_background": bool(
+                                (opts.get("custom_background_path") or "").strip()
+                            ),
                             "created_at": data.get("created_at", ""),
                             "updated_at": data.get("updated_at", ""),
                             "title": fields.get("surname_ru")
