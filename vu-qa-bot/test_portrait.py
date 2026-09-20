@@ -51,9 +51,12 @@ class TestPortraitPrompt(unittest.TestCase):
         self.assertIn("collar", p.lower())
         self.assertNotIn("face centered", p.lower())
 
-    def test_edit_prompt_cutout(self):
+    def test_edit_prompt_selfie_gray_bg(self):
         p = build_portrait_edit_prompt({"birth_date": "08.09.1983", "given_ru": "ИВАН ИВАНОВИЧ"})
-        self.assertIn("cut-out", p.lower())
+        self.assertIn("4:3", p)
+        self.assertIn("сером", p.lower())
+        self.assertIn("gray", p.lower())
+        self.assertIn("preserve", p.lower())
         self.assertNotIn("ИВАН", p)
 
     def test_gender_female(self):
@@ -85,6 +88,9 @@ class TestPortraitPreprocess(unittest.TestCase):
                 openai_api_key=None,
                 openai_model="dall-e-3",
                 openai_size="1024x1024",
+            openrouter_api_key=None,
+            openrouter_model="google/gemini-3.1-flash-lite-image",
+            openrouter_base="https://openrouter.ai/api/v1",
                 api_url=None,
                 api_key=None,
                 width=390,
@@ -159,6 +165,9 @@ class TestPortraitPreprocess(unittest.TestCase):
             openai_api_key=None,
             openai_model="gpt-image-1",
             openai_size="1024x1024",
+            openrouter_api_key=None,
+            openrouter_model="google/gemini-3.1-flash-lite-image",
+            openrouter_base="https://openrouter.ai/api/v1",
             api_url=None,
             api_key=None,
             width=390,
@@ -228,6 +237,18 @@ class TestPortraitService(unittest.TestCase):
             self.assertIsNotNone(path)
             self.assertTrue(Path(path).is_file())
 
+    def test_resolve_skips_text_gen_without_selfie(self):
+        os.environ["PORTRAIT_PROVIDER"] = "openai"
+        os.environ["PORTRAIT_FALLBACK"] = "0"
+        tmp = tempfile.mkdtemp()
+        os.environ["RENDER_OUTPUT_DIR"] = tmp
+        task = RenderTask.create(
+            SAMPLE,
+            options=RenderOptions(mockup="hand", generate_portrait=True, portrait_path=None),
+        )
+        path = resolve_portrait(task)
+        self.assertIsNone(path)
+
     def test_src_upload_not_treated_as_enhanced(self):
         self.assertFalse(_already_enhanced(Path("user_1_src.png")))
         self.assertFalse(_already_enhanced(Path("user_1_src.jpg")))
@@ -272,11 +293,39 @@ class TestPortraitForceSkipsCache(unittest.TestCase):
 
 
 class TestPortraitAutoProvider(unittest.TestCase):
-    def test_auto_prefers_openai_over_localhost_http(self):
+    def test_auto_prefers_openrouter_then_openai(self):
         cfg = PortraitSettings(
             openai_api_key="sk-test",
             openai_model="dall-e-3",
             openai_size="1024x1024",
+            openrouter_api_key="or-test",
+            openrouter_model="google/gemini-3.1-flash-lite-image",
+            openrouter_base="https://openrouter.ai/api/v1",
+            api_url="http://127.0.0.1:8090/generate",
+            api_key=None,
+            width=390,
+            height=507,
+            jpeg_quality=90,
+            provider="auto",
+            fallback_enabled=True,
+            cache_enabled=False,
+            timeout_sec=30,
+        )
+        self.assertEqual(cfg.resolved_provider(), "openrouter")
+        from portrait_ai import OpenAIGenerator, OpenRouterGenerator, build_generators
+
+        gens = build_generators(cfg)
+        self.assertIsInstance(gens[0], OpenRouterGenerator)
+        self.assertIsInstance(gens[1], OpenAIGenerator)
+
+    def test_auto_without_openrouter_uses_openai(self):
+        cfg = PortraitSettings(
+            openai_api_key="sk-test",
+            openai_model="dall-e-3",
+            openai_size="1024x1024",
+            openrouter_api_key=None,
+            openrouter_model="google/gemini-3.1-flash-lite-image",
+            openrouter_base="https://openrouter.ai/api/v1",
             api_url="http://127.0.0.1:8090/generate",
             api_key=None,
             width=390,
@@ -306,6 +355,9 @@ class TestOpenAIImageApi(unittest.TestCase):
             openai_api_key="sk-test",
             openai_model="dall-e-3",
             openai_size="1024x1024",
+            openrouter_api_key=None,
+            openrouter_model="google/gemini-3.1-flash-lite-image",
+            openrouter_base="https://openrouter.ai/api/v1",
             api_url=None,
             api_key=None,
             width=390,
@@ -325,27 +377,14 @@ class TestOpenAIImageApi(unittest.TestCase):
 
 
 class TestOpenAIGeneratorMock(unittest.TestCase):
-    def test_openai_parses_b64(self):
-        import base64
-        import json
-
-        tiny = base64.b64encode(b"fake").decode()
-        payload = json.dumps({"data": [{"b64_json": tiny}]}).encode()
-
-        class FakeResp:
-            def read(self):
-                return payload
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *a):
-                pass
-
+    def test_openai_generate_requires_selfie(self):
         cfg = PortraitSettings(
             openai_api_key="sk-test",
             openai_model="dall-e-3",
             openai_size="1024x1024",
+            openrouter_api_key=None,
+            openrouter_model="google/gemini-3.1-flash-lite-image",
+            openrouter_base="https://openrouter.ai/api/v1",
             api_url=None,
             api_key=None,
             width=390,
@@ -358,11 +397,77 @@ class TestOpenAIGeneratorMock(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp) / "raw.jpg"
-            with patch("urllib.request.urlopen", return_value=FakeResp()):
-                gen = OpenAIGenerator(cfg)
-                r = gen.generate({"birth_date": "01.01.1990", "given_ru": "A B"}, out)
-            self.assertTrue(r.ok)
+            gen = OpenAIGenerator(cfg)
+            r = gen.generate({"birth_date": "01.01.1990", "given_ru": "A B"}, out)
+            self.assertFalse(r.ok)
+            self.assertIn("селфи", r.message.lower())
+
+    def test_openrouter_edit_posts_images_api(self):
+        import base64
+        import json
+
+        from portrait_ai import OpenRouterGenerator
+
+        # Valid-looking JPEG payload (>= 100 bytes after decode)
+        tiny_img = Image.new("RGB", (32, 32), (90, 80, 70))
+        import io
+
+        buf = io.BytesIO()
+        tiny_img.save(buf, format="JPEG", quality=90)
+        raw_jpeg = buf.getvalue()
+        self.assertGreaterEqual(len(raw_jpeg), 100)
+        tiny = base64.b64encode(raw_jpeg).decode()
+        payload = json.dumps({"data": [{"b64_json": tiny, "media_type": "image/jpeg"}]}).encode()
+        captured: dict = {}
+
+        class FakeResp:
+            def read(self):
+                return payload
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                pass
+
+        def fake_urlopen(req, timeout=0):
+            captured["url"] = req.full_url
+            captured["body"] = json.loads(req.data.decode("utf-8"))
+            return FakeResp()
+
+        cfg = PortraitSettings(
+            openai_api_key=None,
+            openai_model="gpt-image-1",
+            openai_size="1024x1024",
+            openrouter_api_key="or-test",
+            openrouter_model="google/gemini-3.1-flash-lite-image",
+            openrouter_base="https://openrouter.ai/api/v1",
+            api_url=None,
+            api_key=None,
+            width=390,
+            height=507,
+            jpeg_quality=90,
+            provider="openrouter",
+            fallback_enabled=False,
+            cache_enabled=False,
+            timeout_sec=30,
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "face.jpg"
+            Image.new("RGB", (80, 100), (90, 80, 70)).save(src, format="JPEG")
+            out = Path(tmp) / "edited.jpg"
+            with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+                gen = OpenRouterGenerator(cfg)
+                r = gen.edit(src, {"birth_date": "01.01.1990"}, out)
+            self.assertTrue(r.ok, r.message)
+            self.assertTrue(captured["url"].endswith("/images"))
+            self.assertEqual(captured["body"]["model"], "google/gemini-3.1-flash-lite-image")
+            self.assertIn("input_references", captured["body"])
+            self.assertEqual(captured["body"]["aspect_ratio"], "4:3")
+            ref = captured["body"]["input_references"][0]["image_url"]["url"]
+            self.assertTrue(ref.startswith("data:image/jpeg;base64,"))
             self.assertTrue(out.is_file())
+            self.assertGreaterEqual(out.stat().st_size, 100)
 
     def test_openai_edit_posts_multipart(self):
         import base64
@@ -392,6 +497,9 @@ class TestOpenAIGeneratorMock(unittest.TestCase):
             openai_api_key="sk-test",
             openai_model="gpt-image-1",
             openai_size="1024x1024",
+            openrouter_api_key=None,
+            openrouter_model="google/gemini-3.1-flash-lite-image",
+            openrouter_base="https://openrouter.ai/api/v1",
             api_url=None,
             api_key=None,
             width=390,

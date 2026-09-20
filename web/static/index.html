@@ -243,18 +243,18 @@
                 <input type="file" accept="image/*" id="bgFile">
               </div>
             </div>
-            <label class="switch-row span-2">
-              <input type="checkbox" id="genPortrait">
-              <span class="switch"></span>
-              <span class="switch-text">Сгенерировать портрет с нуля (ИИ)</span>
-            </label>
             <div class="field span-2">
-              <span class="lbl">Свой портрет — ИИ вырежет фон и сделает фото на документ</span>
+              <span class="lbl">Селфи → документный портрет (OpenRouter NB 2 Lite)</span>
               <div class="file-drop" id="fileDrop">
                 <span class="ic dim" data-icon="upload" data-icon-size="18"></span>
-                <span id="fileName">Перетащите файл или нажмите для выбора</span>
+                <span id="fileName">Перетащите селфи или нажмите для выбора</span>
                 <input type="file" accept="image/*" id="portraitFile">
               </div>
+              <label class="switch-row mt-sm" id="genPortraitRow">
+                <input type="checkbox" id="genPortrait">
+                <span class="switch"></span>
+                <span class="switch-text">Вставить этот портрет в ВУ</span>
+              </label>
             </div>
             <div class="span-2 form-foot">
               <button type="submit" class="btn primary lg" id="renderSubmit">

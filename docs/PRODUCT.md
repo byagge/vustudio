@@ -8,8 +8,8 @@
 
 - Генерация блока полей ВУ по ФИО + дате + месту рождения.
 - Отрисовка в мокап: рука, фон 1–10, портрет в smart object `Photo`.
-- Загруженное фото всегда прогоняется через ИИ: тот же человек, фон вырезан, вид фото на документ.
-- Генерация портрета с нуля, если своего фото нет.
+- Загруженное селфи прогоняется через OpenRouter (NB 2 Lite): тот же человек, серый фон, вид фото на документ.
+- Генерация портрета с нуля по промпту/возрасту **не используется**.
 - На мокапе рисуются категории **B, B1, M** — генератор больше не подмешивает C/A/D.
 - После отрисовки приходят **два JPG**: лицевая (рука с картой) и оборот (если в PSB есть слой `Back`).
 
@@ -27,14 +27,15 @@
 
 ### Портрет
 
-- «Сгенерировать» — `gpt-image-1` text-to-image, серый студийный фон.
-- Своё фото — `POST /v1/images/edits`: identity-preserving, `background=transparent`, затем композит на серый бланк 3×4 (390×507).
-- Если OpenAI недоступен, фото кропается как есть (без подмены лица заглушкой).
+- Нужно **селфи**: бот/панель принимают фото → OpenRouter (`google/gemini-3.1-flash-lite-image`, NB 2 Lite) делает портрет 4:3 на сером фоне (лицо как на исходнике).
+- Fallback edit: OpenAI `images/edits`, если OpenRouter недоступен.
+- Генерация «с нуля» по году/описанию отключена.
+- Если ИИ недоступен, фото кропается как есть (без подмены лица заглушкой).
 
 Исходник: `output/portraits/user_{id}_src.*`. Результат: `user_{id}.jpg`.
 Панель пишет `user_web_{uuid}.jpg`, чтобы параллельные загрузки не перетирали друг друга.
 
-ИИ-кадр не режется сверху на 72% (это только fallback для обычного селфи без OpenAI).
+ИИ-кадр не режется сверху на 72% (это только fallback для обычного селфи без ИИ).
 
 ### Отрисовка
 
@@ -88,11 +89,13 @@ JSX: `photoshop/render.jsx`, версия `2026-09-16.1`. На VPS копиро�
 
 | Переменная | Смысл |
 |---|---|
-| `PORTRAIT_PROVIDER` | `openai` / `auto` / `fallback` |
-| `OPENAI_API_KEY` | ключ Images API |
+| `PORTRAIT_PROVIDER` | `auto` / `openrouter` / `openai` / `fallback` |
+| `OPENROUTER_API_KEY` | ключ OpenRouter Images API (селфи → портрет) |
+| `PORTRAIT_OPENROUTER_MODEL` | `google/gemini-3.1-flash-lite-image` |
+| `OPENAI_API_KEY` | опциональный fallback edit |
 | `PORTRAIT_OPENAI_MODEL` | `gpt-image-1` |
-| `PORTRAIT_TIMEOUT` | сек, edit дольше generate |
-| `PORTRAIT_FALLBACK` | `1` только для dev: кроп без OpenAI |
+| `PORTRAIT_TIMEOUT` | сек, edit обычно 30–120 |
+| `PORTRAIT_FALLBACK` | `1` только для dev: кроп без ИИ |
 
 ## Запуск (Windows)
 
@@ -107,6 +110,8 @@ cd D:\codes\otris
 ```
 
 После правок Python/JSX на VPS: скопировать файлы в `C:\Users\admin\Desktop\otris\` и перезапустить **один** процесс бота и worker.
+
+Для портрета на проде обязателен `OPENROUTER_API_KEY` в `.env` (модель NB 2 Lite). Без ключа edit уйдёт в OpenAI fallback, если задан `OPENAI_API_KEY`.
 
 ## Тесты
 

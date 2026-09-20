@@ -215,7 +215,7 @@ def render_options_kb(
 ) -> InlineKeyboardMarkup:
     row1 = [digit_btn(i, f"rb:{i}", selected=(bg == i and not custom_bg)) for i in range(1, 6)]
     row2 = [digit_btn(i, f"rb:{i}", selected=(bg == i and not custom_bg)) for i in range(6, 11)]
-    port = ("✓ " if portrait_on else "") + "Портрет (ИИ)"
+    port = ("✓ " if portrait_on else "") + "Селфи → портрет"
     custom_label = "✓ Свой фон" if custom_bg else "Свой фон"
     rows: list[list[InlineKeyboardButton]] = [row1, row2, [btn(custom_label, "rb:custom", "folder")]]
     rows.append([btn(port, "rp:ai", "user"), btn("Отрисовать", "rq:go", "check")])
@@ -228,7 +228,6 @@ def render_options_kb(
 def portrait_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [btn("Сгенерировать ИИ", "rp:ai", "star")],
             [back_menu_btn()],
         ]
     )

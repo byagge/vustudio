@@ -1071,8 +1071,10 @@ $("genPortrait").addEventListener("change", saveForm);
 
 $("portraitFile").addEventListener("change", (e) => {
   const f = e.target.files?.[0];
-  $("fileName").textContent = f ? f.name : "Перетащите файл или нажмите для выбора";
+  $("fileName").textContent = f ? f.name : "Перетащите селфи или нажмите для выбора";
   $("fileDrop").classList.toggle("has-file", !!f);
+  if (f) $("genPortrait").checked = true;
+  saveForm();
 });
 
 $("bgFile")?.addEventListener("change", (e) => {
@@ -1655,8 +1657,12 @@ $("renderForm").addEventListener("submit", async (e) => {
   try {
     let portraitPath = null;
     const file = $("portraitFile").files?.[0];
+    const wantPortrait = $("genPortrait").checked;
+    if (wantPortrait && !file) {
+      throw new Error("Для портрета загрузите селфи — генерация с нуля отключена");
+    }
     if (file) {
-      toast("Прогоняю портрет через ИИ…", "ok");
+      toast("Делаю портрет из селфи (OpenRouter)…", "ok");
       const form = new FormData();
       form.append("file", file);
       const h = {};
@@ -1672,7 +1678,7 @@ $("renderForm").addEventListener("submit", async (e) => {
       text_block: $("renderText").value,
       mockup: "hand",
       background: 1,
-      generate_portrait: $("genPortrait").checked,
+      generate_portrait: false,
       portrait_path: portraitPath,
       wait: false,
     };

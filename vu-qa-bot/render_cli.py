@@ -38,8 +38,12 @@ def main() -> int:
     p.add_argument("--wait", action="store_true", help="Ждать worker (--queue)")
     p.add_argument("--validate", action="store_true", help="Только проверка блока")
     p.add_argument("--verify-scene", action="store_true", help="Проверка scene vs PSB (task4)")
-    p.add_argument("--generate-portrait", action="store_true", help="ИИ-портрет (PORTRAIT_API_URL)")
-    p.add_argument("--portrait", type=Path, default=None, help="Путь к JPG портрета")
+    p.add_argument(
+        "--generate-portrait",
+        action="store_true",
+        help="Dev only: fallback portrait without selfie (PORTRAIT_FALLBACK=1)",
+    )
+    p.add_argument("--portrait", type=Path, default=None, help="Путь к селфи/JPG портрета")
     p.add_argument("-o", "--output-dir", type=Path, default=None)
     args = p.parse_args()
 

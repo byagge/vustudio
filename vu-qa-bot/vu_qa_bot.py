@@ -36,7 +36,7 @@ from formatter import BANNER, format_client_block, format_debug_block, record_to
 from mockup_registry import MOCKUPS, coerce_panel_mockup
 from mockup_scene import normalize_options_for_mockup, scene_summary
 from background_service import background_status_label, prepare_upload as prepare_background_upload
-from portrait_service import generate_ai_portrait, portrait_status_label, prepare_upload
+from portrait_service import portrait_status_label, prepare_upload
 from photoshop_text import substitute_text_queued, wait_substitute
 from render_models import RenderOptions
 from text_parser import TextParseError, parse_client_block
@@ -126,59 +126,59 @@ def _portrait_caption(opts: RenderOptions) -> str:
     return f"Мокап: <b>{html.escape(mockup_title)}</b>, фон: {html.escape(bg)}\nПортрет: {html.escape(st)}"
 
 
-async def _generate_portrait_preview(msg: Message, draft: RenderDraft | None, uid: int) -> bool:
+async def _apply_portrait_upload(
+    msg: Message,
+    uid: int,
+    data: bytes,
+    *,
+    suffix: str = ".jpg",
+) -> None:
+    """Селфи → OpenRouter/edit → превью и привязка к draft."""
+    _awaiting_photo.discard(uid)
+    await _send_html(
+        msg,
+        f"{tg_ui.ce('clock')} Делаю портрет из селфи через OpenRouter (NB 2 Lite)…",
+    )
+    draft = _drafts.get(uid)
     fields = dict(_DEFAULT_PORTRAIT_FIELDS)
     if draft and (draft.text_block or "").strip():
         try:
             block = parse_client_block(draft.text_block)
-            errors = validate_block(block)
-            if not errors:
+            if not validate_block(block):
                 from render_models import block_to_dict
 
                 fields = block_to_dict(block)
         except TextParseError:
             pass
-
-    await _send_html(msg, f"{tg_ui.ce('clock')} Генерирую ИИ-портрет по промпту… (10–60 сек)")
     result = await asyncio.to_thread(
-        generate_ai_portrait,
-        fields,
-        force=True,
+        prepare_upload,
+        data,
+        uid,
+        suffix=suffix,
+        fields=fields,
     )
     if not result.ok or not result.path:
         await _send_html(
             msg,
-            f"{tg_ui.ce('stop')} {html.escape(result.message)}",
+            f"{tg_ui.ce('stop')} {html.escape(result.message or 'Ошибка загрузки')}",
             reply_markup=tg_ui.back_only_kb(),
         )
-        return False
-
-    draft = draft or _drafts.get(uid) or RenderDraft(text_block="")
+        return
+    draft = _drafts.get(uid) or RenderDraft(text_block="")
     draft.options.portrait_path = str(result.path)
     draft.options.generate_portrait = False
     _drafts[uid] = draft
     await _send_photo(
         msg,
         FSInputFile(str(result.path)),
-        f"{tg_ui.ce('ok')} {html.escape(result.message)} ({html.escape(str(result.source or ''))})",
+        f"{tg_ui.ce('ok')} {html.escape(result.message or 'Портрет готов')}",
     )
-    if (draft.text_block or "").strip():
+    if draft.text_block.strip():
         await _send_html(
             msg,
-            tg_ui.render_prompt_text(
-                scene_summary(draft.options),
-                draft.options.background,
-                custom_bg=bool(draft.options.custom_background_path),
-            ),
+            _render_options_text(draft),
             reply_markup=render_options_kb(draft.options, replace_job_id=draft.replace_job_id),
         )
-    else:
-        await _send_html(
-            msg,
-            f"{tg_ui.ce('ok')} Портрет готов. Можно вставить в отрисовку.",
-            reply_markup=tg_ui.back_only_kb(),
-        )
-    return True
 
 
 def profile_summary(profile) -> str:
@@ -712,7 +712,8 @@ def create_dispatcher(settings: Settings) -> Dispatcher:
         await _send_html(
             cq.message,
             f"{tg_ui.ce('user')} <b>Портрет</b>\n"
-            "Сгенерирую фото на документ по промпту, либо пришлите своё — ИИ вырежет фон.",
+            "Пришлите селфи человека — OpenRouter сделает документный портрет 4:3 "
+            "на сером фоне (лицо сохраняется).",
             reply_markup=tg_ui.portrait_kb(),
         )
 
@@ -843,15 +844,11 @@ def create_dispatcher(settings: Settings) -> Dispatcher:
     @dp.message(Command("portrait"))
     async def cmd_portrait(msg: Message, command: CommandObject) -> None:
         uid = msg.from_user.id
-        arg = (command.args or "").strip().lower()
-
-        if arg == "generate":
-            await _generate_portrait_preview(msg, _drafts.get(uid), uid)
-            return
-
+        _awaiting_photo.add(uid)
         await _send_html(
             msg,
-            f"{tg_ui.ce('user')} Отправьте фото — ИИ сделает портрет на документ и вырежет фон.",
+            f"{tg_ui.ce('user')} Пришлите селфи — OpenRouter сделает портрет на документ "
+            "(серый фон, лицо как на фото).",
             reply_markup=tg_ui.portrait_kb(),
         )
 
@@ -870,48 +867,7 @@ def create_dispatcher(settings: Settings) -> Dispatcher:
             await _send_html(msg, f"{tg_ui.ce('clock')} Сохраняю фон…")
             await _apply_background_upload(msg, uid, buf.getvalue())
             return
-        _awaiting_photo.discard(uid)
-        await _send_html(msg, f"{tg_ui.ce('clock')} Прогоняю фото через ИИ (вырезаю фон)…")
-        draft = _drafts.get(uid)
-        fields = dict(_DEFAULT_PORTRAIT_FIELDS)
-        if draft and (draft.text_block or "").strip():
-            try:
-                block = parse_client_block(draft.text_block)
-                if not validate_block(block):
-                    from render_models import block_to_dict
-
-                    # validate_block возвращает список ошибок: пустой = блок валиден
-                    fields = block_to_dict(block)
-            except TextParseError:
-                pass
-        result = await asyncio.to_thread(
-            prepare_upload,
-            buf.getvalue(),
-            msg.from_user.id,
-            fields=fields,
-        )
-        if not result.ok or not result.path:
-            await _send_html(
-                msg,
-                f"{tg_ui.ce('stop')} {html.escape(result.message or 'Ошибка загрузки')}",
-                reply_markup=tg_ui.back_only_kb(),
-            )
-            return
-        draft = _drafts.get(msg.from_user.id) or RenderDraft(text_block="")
-        draft.options.portrait_path = str(result.path)
-        draft.options.generate_portrait = False
-        _drafts[msg.from_user.id] = draft
-        await _send_photo(
-            msg,
-            FSInputFile(str(result.path)),
-            f"{tg_ui.ce('ok')} {html.escape(result.message or 'Портрет готов')}",
-        )
-        if draft.text_block.strip():
-            await _send_html(
-                msg,
-                _render_options_text(draft),
-                reply_markup=render_options_kb(draft.options, replace_job_id=draft.replace_job_id),
-            )
+        await _apply_portrait_upload(msg, uid, buf.getvalue(), suffix=".jpg")
 
     @dp.message(F.text.func(_looks_like_vu_block))
     async def on_vu_text_block(msg: Message) -> None:
@@ -934,15 +890,20 @@ def create_dispatcher(settings: Settings) -> Dispatcher:
             return
         uid = msg.from_user.id
         name = (doc.file_name or "").lower()
-        if name.endswith((".jpg", ".jpeg", ".png", ".webp")):
-            if uid in _awaiting_background or _photo_mode.get(uid) in {"background", "background_replace"}:
-                file = await msg.bot.get_file(doc.file_id)
-                from io import BytesIO
+        mime = (doc.mime_type or "").lower()
+        is_image = name.endswith((".jpg", ".jpeg", ".png", ".webp")) or mime.startswith("image/")
+        if is_image:
+            file = await msg.bot.get_file(doc.file_id)
+            from io import BytesIO
 
-                buf = BytesIO()
-                await msg.bot.download_file(file.file_path, buf)
+            buf = BytesIO()
+            await msg.bot.download_file(file.file_path, buf)
+            if uid in _awaiting_background or _photo_mode.get(uid) in {"background", "background_replace"}:
                 await _send_html(msg, f"{tg_ui.ce('clock')} Сохраняю фон…")
                 await _apply_background_upload(msg, uid, buf.getvalue())
+                return
+            suffix = Path(name).suffix if name else ".jpg"
+            await _apply_portrait_upload(msg, uid, buf.getvalue(), suffix=suffix or ".jpg")
             return
         if not name.endswith(".txt"):
             return
@@ -1097,16 +1058,16 @@ def create_dispatcher(settings: Settings) -> Dispatcher:
         draft = _drafts.get(uid)
         if draft:
             draft.options.mockup = coerce_panel_mockup(draft.options.mockup)
-            draft.options.generate_portrait = True
-            draft.options.portrait_path = None
-        await cq.answer("Генерирую портрет…")
-        ok = await _generate_portrait_preview(cq.message, draft, uid)
-        if not ok:
-            await _send_html(
-                cq.message,
-                f"{tg_ui.ce('warning')} Провайдер не ответил. Проверьте OPENAI_API_KEY.",
-                reply_markup=tg_ui.portrait_kb(),
-            )
+            draft.options.generate_portrait = False
+        _awaiting_photo.add(uid)
+        await cq.answer()
+        await _send_html(
+            cq.message,
+            f"{tg_ui.ce('user')} <b>Селфи → портрет</b>\n"
+            "Пришлите фото человека. OpenRouter (NB 2 Lite) сделает документный "
+            "портрет 4:3 на сером фоне — лицо как на селфи.",
+            reply_markup=tg_ui.portrait_kb(),
+        )
 
     @dp.callback_query(F.data == "rq:go")
     async def cb_render_go(cq: CallbackQuery) -> None:

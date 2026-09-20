@@ -5,10 +5,12 @@
 
 Приоритет resolve_portrait():
   1. portrait_path (файл существует)
-     — user_*/gen_*/prep_* уже прогнаны через ИИ при загрузке/генерации
-     — прочие файлы прогоняются через ИИ-edit (вырезанный фон)
-  2. generate_portrait → генерация с нуля
+     — user_*/gen_*/prep_* уже прогнаны через ИИ при загрузке
+     — прочие файлы прогоняются через ИИ-edit (селфи → документный портрет)
+  2. generate_portrait без файла — только dev fallback (PORTRAIT_FALLBACK=1)
   3. null — placeholder в PSB
+
+Продакшен: селфи → OpenRouter NB 2 Lite (edit), не text-to-image.
 """
 from __future__ import annotations
 
@@ -65,7 +67,7 @@ def save_upload(data: bytes, user_id: int | str, suffix: str = ".jpg") -> Path:
 
 
 def prepare_upload(data: bytes, user_id: int | str, *, suffix: str = ".jpg", fields: dict[str, Any] | None = None) -> PortraitResult:
-    """Сохранить исходник и прогнать через ИИ (документный портрет, фон вырезан)."""
+    """Сохранить селфи и прогнать через ИИ (документный портрет на сером фоне)."""
     try:
         validate_image_bytes(data)
     except ValueError as e:
@@ -76,7 +78,13 @@ def prepare_upload(data: bytes, user_id: int | str, *, suffix: str = ".jpg", fie
         dest = portraits_dir() / f"user_{user_id}.jpg"
         enhanced = transform_uploaded_portrait(src, dest, fields=fields)
         if enhanced.ok:
-            return enhanced
+            return PortraitResult(
+                ok=True,
+                path=enhanced.path,
+                source=enhanced.source,
+                provider=enhanced.provider,
+                message=enhanced.message or "Портрет из селфи готов",
+            )
         log.warning("portrait AI edit failed, crop only: %s", enhanced.message)
         path = prepare_portrait_file(src, dest, face_focus=True)
         msg = enhanced.message or "ИИ недоступен"
@@ -182,7 +190,7 @@ def generate_ai_portrait(
         path=out,
         source=f"ai_{gen.provider}",
         provider=gen.provider,
-        message="ИИ-портрет готов",
+        message="ИИ-портрет готов (fallback/dev)",
     )
 
 
@@ -194,7 +202,7 @@ def transform_uploaded_portrait(
     settings: PortraitSettings | None = None,
     job_id: str | None = None,
 ) -> PortraitResult:
-    """Загруженное фото → ИИ-edit (cut-out) → 3×4 JPEG под бланк."""
+    """Селфи → ИИ-edit (OpenRouter NB 2 Lite / OpenAI edits) → 3×4 JPEG под бланк."""
     cfg = settings or PortraitSettings.from_env()
     fields = fields or {}
     jid = job_id or dest.stem
@@ -204,7 +212,7 @@ def transform_uploaded_portrait(
     if not gen.ok or not gen.raw_path or not gen.raw_path.is_file():
         return PortraitResult(
             ok=False,
-            message=gen.message or "ИИ-обработка фото не удалась",
+            message=gen.message or "ИИ-обработка селфи не удалась",
             provider=gen.provider,
         )
     try:
@@ -217,7 +225,7 @@ def transform_uploaded_portrait(
         path=dest,
         source=f"ai_edit_{gen.provider}",
         provider=gen.provider,
-        message="ИИ-портрет с вырезанным фоном",
+        message="Портрет из селфи готов",
     )
 
 
@@ -269,6 +277,14 @@ def resolve_portrait(task: RenderTask) -> str | None:
         log.info("portrait skip job=%s (generate_portrait=false, no file)", task.job_id)
         return None
 
+    # Product path requires selfie. Text-to-image only for explicit fallback/dev.
+    if not cfg.fallback_enabled and cfg.provider not in {"fallback", "http"}:
+        log.error(
+            "portrait job=%s: generate_portrait без селфи отключён — нужен portrait_path",
+            task.job_id,
+        )
+        return None
+
     result = generate_ai_portrait(
         task.fields,
         job_id=task.job_id,
@@ -297,9 +313,9 @@ def portrait_status_label(opts) -> str:
         if name.startswith("gen_"):
             return "🧑 ИИ готов"
         if name.startswith("user_"):
-            return "📷 своё фото → ИИ"
+            return "📷 селфи → ИИ"
         return "📷 своё фото"
     if getattr(opts, "generate_portrait", False):
-        return "🧑 ИИ (при отрисовке)"
+        return "⏳ ждёт селфи"
     return "без портрета"
 

@@ -142,71 +142,224 @@ def _write_openai_image(item: dict[str, Any], out_path: Path, timeout: int) -> N
     raise KeyError("OpenAI image payload has neither b64_json nor url")
 
 
+class OpenRouterGenerator(PortraitGenerator):
+    """Selfie → document portrait via OpenRouter Images API (Nano Banana 2 Lite)."""
+
+    _MIN_BYTES = 100
+
+    def __init__(self, settings: PortraitSettings):
+        self.settings = settings
+
+    def generate(self, fields: dict[str, Any], out_path: Path) -> GenerationResult:
+        return GenerationResult(
+            ok=False,
+            provider="openrouter",
+            message="Нужно селфи: OpenRouter делает портрет только из загруженного фото",
+        )
+
+    def edit(self, source: Path, fields: dict[str, Any], out_path: Path) -> GenerationResult:
+        key = self.settings.openrouter_api_key
+        if not key:
+            return GenerationResult(
+                ok=False,
+                provider="openrouter",
+                message="OPENROUTER_API_KEY не задан",
+            )
+        if not source.is_file():
+            return GenerationResult(ok=False, provider="openrouter", message="Исходное фото не найдено")
+
+        prompt = build_portrait_edit_prompt(fields)
+        try:
+            data_url = _openrouter_reference_data_url(source)
+        except Exception as e:
+            return GenerationResult(ok=False, provider="openrouter", message=str(e))
+
+        model = self.settings.openrouter_model or "google/gemini-3.1-flash-lite-image"
+        url = f"{self.settings.openrouter_base.rstrip('/')}/images"
+        body: dict[str, Any] = {
+            "model": model,
+            "prompt": prompt,
+            "aspect_ratio": "4:3",
+            "resolution": "1K",
+            "input_references": [
+                {"type": "image_url", "image_url": {"url": data_url}},
+            ],
+        }
+
+        log.info(
+            "OpenRouter portrait EDIT %s model=%s timeout=%ss",
+            url,
+            model,
+            self.settings.timeout_sec,
+        )
+        try:
+            payload = _openrouter_post(url, key, body, self.settings.timeout_sec)
+        except urllib.error.HTTPError as e:
+            err = e.read().decode("utf-8", errors="replace")[:500]
+            log.error("OpenRouter HTTP %s: %s", e.code, err)
+            # Retry once without optional fields some endpoints reject.
+            if e.code == 400:
+                for drop in ("aspect_ratio", "resolution"):
+                    body.pop(drop, None)
+                try:
+                    payload = _openrouter_post(url, key, body, self.settings.timeout_sec)
+                except urllib.error.HTTPError as e2:
+                    err2 = e2.read().decode("utf-8", errors="replace")[:500]
+                    return GenerationResult(
+                        ok=False,
+                        provider="openrouter",
+                        message=f"OpenRouter: {e2.code} {err2[:160]}",
+                    )
+                except Exception as e2:
+                    log.exception("OpenRouter portrait edit failed")
+                    return GenerationResult(ok=False, provider="openrouter", message=str(e2))
+            else:
+                return GenerationResult(
+                    ok=False,
+                    provider="openrouter",
+                    message=f"OpenRouter: {e.code} {err[:160]}",
+                )
+        except Exception as e:
+            log.exception("OpenRouter portrait edit failed")
+            return GenerationResult(ok=False, provider="openrouter", message=str(e))
+
+        try:
+            img = _decode_openrouter_image(payload)
+            if not img:
+                return GenerationResult(
+                    ok=False,
+                    provider="openrouter",
+                    message="OpenRouter: пустой ответ без изображения",
+                )
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_bytes(img)
+            if out_path.stat().st_size < self._MIN_BYTES:
+                return GenerationResult(
+                    ok=False,
+                    provider="openrouter",
+                    message="OpenRouter: пустой файл изображения",
+                )
+            log.info(
+                "OpenRouter portrait OK bytes=%s -> %s",
+                out_path.stat().st_size,
+                out_path.name,
+            )
+            return GenerationResult(ok=True, raw_path=out_path, provider="openrouter")
+        except Exception as e:
+            log.exception("OpenRouter portrait decode failed")
+            return GenerationResult(ok=False, provider="openrouter", message=str(e))
+
+
+def _openrouter_post(url: str, key: str, body: dict[str, Any], timeout: int) -> dict[str, Any]:
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(body).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {key}",
+            "HTTP-Referer": "https://photoshop.arix.vu",
+            "X-Title": "Otris VU Portrait",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def _openrouter_reference_data_url(source: Path) -> str:
+    """JPEG data-URL for OpenRouter input_references (smaller than PNG)."""
+    import io
+
+    from PIL import Image, ImageOps
+
+    with Image.open(source) as im:
+        im = ImageOps.exif_transpose(im)
+        if im.mode not in {"RGB", "L"}:
+            im = im.convert("RGB")
+        w, h = im.size
+        if max(w, h) > _EDIT_MAX_SIDE:
+            im.thumbnail((_EDIT_MAX_SIDE, _EDIT_MAX_SIDE), Image.Resampling.LANCZOS)
+        buf = io.BytesIO()
+        im.save(buf, format="JPEG", quality=92)
+        b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+    return f"data:image/jpeg;base64,{b64}"
+
+
+def _b64_to_bytes(raw: str) -> bytes | None:
+    if not raw:
+        return None
+    s = raw.strip()
+    if "base64," in s:
+        s = s.split("base64,", 1)[1]
+    try:
+        return base64.b64decode(s)
+    except Exception:
+        return None
+
+
+def _decode_openrouter_image(payload: dict[str, Any]) -> bytes | None:
+    """Decode Image API data[] or chat-style OpenRouter payloads."""
+    data = payload.get("data") or []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        img = _b64_to_bytes(item.get("b64_json") or "")
+        if img:
+            return img
+        url = item.get("url")
+        if isinstance(url, str) and url.startswith("data:") and "base64," in url:
+            img = _b64_to_bytes(url)
+            if img:
+                return img
+        if isinstance(url, str) and url.startswith("http"):
+            req = urllib.request.Request(url, method="GET")
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                got = resp.read()
+            if got:
+                return got
+
+    img = _extract_openrouter_image(payload)
+    return img
+
+
+def _extract_openrouter_image(payload: dict[str, Any]) -> bytes | None:
+    """Fallback: pull first data-URL / b64 image from chat-like OpenRouter payloads."""
+    choices = payload.get("choices") or []
+    for ch in choices:
+        msg = ch.get("message") or {}
+        content = msg.get("content")
+        if isinstance(content, str):
+            img = _b64_to_bytes(content) if ("base64," in content or len(content) > 200) else None
+            if img:
+                return img
+        if isinstance(content, list):
+            for part in content:
+                if not isinstance(part, dict):
+                    continue
+                url = (part.get("image_url") or {}).get("url") or part.get("url") or ""
+                if isinstance(url, str):
+                    img = _b64_to_bytes(url) if ("base64," in url or url.startswith("data:")) else None
+                    if img:
+                        return img
+                b64 = part.get("b64_json")
+                if b64:
+                    img = _b64_to_bytes(b64)
+                    if img:
+                        return img
+    return None
+
+
 class OpenAIGenerator(PortraitGenerator):
     def __init__(self, settings: PortraitSettings):
         self.settings = settings
 
     def generate(self, fields: dict[str, Any], out_path: Path) -> GenerationResult:
-        key = self.settings.openai_api_key
-        if not key:
-            return GenerationResult(ok=False, provider="openai", message="OPENAI_API_KEY не задан")
-
-        prompt = build_portrait_prompt(fields)
-        requested = (self.settings.openai_model or "").strip()
-        model = resolve_openai_image_model(requested)
-        if model != requested:
-            log.info("OpenAI model %s retired/unknown — using %s", requested or "(empty)", model)
-
-        bodies = [
-            openai_image_body(self.settings, prompt, model=model),
-            {
-                "model": model,
-                "prompt": prompt,
-                "n": 1,
-                "size": "1024x1024",
-            },
-        ]
-        url = "https://api.openai.com/v1/images/generations"
-        last_err = "OpenAI: пустой ответ"
-        for i, body in enumerate(bodies):
-            log.info(
-                "OpenAI portrait POST %s model=%s attempt=%s timeout=%ss (ожидайте, не кликайте консоль)",
-                url,
-                body.get("model"),
-                i + 1,
-                self.settings.timeout_sec,
-            )
-            req = urllib.request.Request(
-                url,
-                data=json.dumps(body).encode("utf-8"),
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {key}",
-                },
-                method="POST",
-            )
-            try:
-                with urllib.request.urlopen(req, timeout=self.settings.timeout_sec) as resp:
-                    payload = json.loads(resp.read().decode("utf-8"))
-                _write_openai_image(payload["data"][0], out_path, self.settings.timeout_sec)
-                if not out_path.is_file() or out_path.stat().st_size < 100:
-                    return GenerationResult(
-                        ok=False,
-                        provider="openai",
-                        message="OpenAI: пустой файл изображения",
-                    )
-                log.info("OpenAI portrait OK bytes=%s -> %s", out_path.stat().st_size, out_path.name)
-                return GenerationResult(ok=True, raw_path=out_path, provider="openai")
-            except urllib.error.HTTPError as e:
-                err = e.read().decode("utf-8", errors="replace")[:500]
-                log.error("OpenAI HTTP %s: %s", e.code, err)
-                last_err = f"OpenAI: {e.code} {err[:160]}"
-                if e.code != 400:
-                    break
-            except Exception as e:
-                log.exception("OpenAI portrait failed")
-                return GenerationResult(ok=False, provider="openai", message=str(e))
-        return GenerationResult(ok=False, provider="openai", message=last_err)
+        # Product path: selfie → edit (OpenRouter / OpenAI edits), not text-to-image.
+        return GenerationResult(
+            ok=False,
+            provider="openai",
+            message="Нужно селфи: портрет только из загруженного фото",
+        )
 
     def edit(self, source: Path, fields: dict[str, Any], out_path: Path) -> GenerationResult:
         key = self.settings.openai_api_key
@@ -368,6 +521,9 @@ def build_generators(settings: PortraitSettings) -> list[PortraitGenerator]:
     provider = settings.provider if settings.provider else "auto"
     gens: list[PortraitGenerator] = []
     if provider == "auto":
+        # Selfie edit: OpenRouter (NB 2 Lite) first, then OpenAI edits, then fallback crop.
+        if settings.openrouter_api_key:
+            gens.append(OpenRouterGenerator(settings))
         if settings.openai_api_key:
             gens.append(OpenAIGenerator(settings))
         if settings.api_url:
@@ -376,7 +532,9 @@ def build_generators(settings: PortraitSettings) -> list[PortraitGenerator]:
             gens.append(FallbackGenerator(settings))
         return gens
     resolved = settings.resolved_provider()
-    if resolved == "openai":
+    if resolved == "openrouter":
+        gens.append(OpenRouterGenerator(settings))
+    elif resolved == "openai":
         gens.append(OpenAIGenerator(settings))
     elif resolved == "http":
         gens.append(HttpApiGenerator(settings))
@@ -397,7 +555,7 @@ def generate_raw_portrait(
     if not generators:
         return GenerationResult(
             ok=False,
-            message="Нет провайдера: задайте OPENAI_API_KEY или PORTRAIT_API_URL",
+            message="Нет провайдера: задайте OPENROUTER_API_KEY или OPENAI_API_KEY",
         )
     last = GenerationResult(ok=False, message="Неизвестная ошибка")
     for gen in generators:

@@ -122,31 +122,10 @@ def create_app() -> FastAPI:
 
     @app.post("/api/v1/portrait/generate", response_model=PortraitGenerateResponse)
     async def portrait_generate(body: PortraitGenerateRequest, _: None = Depends(auth)):
-        import asyncio
-
-        from portrait_service import generate_ai_portrait
-        from render_models import block_to_dict
-        from text_parser import TextParseError, parse_client_block
-
-        if body.fields:
-            fields = body.fields
-        elif body.text_block:
-            try:
-                fields = block_to_dict(parse_client_block(body.text_block))
-            except TextParseError as e:
-                raise HTTPException(400, str(e)) from e
-        else:
-            raise HTTPException(400, "Укажите text_block или fields")
-
-        result = await asyncio.to_thread(generate_ai_portrait, fields)
-        if not result.ok:
-            raise HTTPException(503, result.message)
-        return PortraitGenerateResponse(
-            ok=True,
-            portrait_path=result.path_str,
-            message=result.message,
-            source=result.source,
-            provider=result.provider,
+        raise HTTPException(
+            400,
+            "Генерация с нуля отключена. Загрузите селфи через POST /api/v1/portrait/upload "
+            "(OpenRouter NB 2 Lite).",
         )
 
     @app.get("/api/v1/portrait/download")

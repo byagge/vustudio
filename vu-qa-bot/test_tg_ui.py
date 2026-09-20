@@ -50,6 +50,12 @@ class TestTgUi(unittest.TestCase):
         marks = [b.text for row in kb.inline_keyboard[:2] for b in row]
         self.assertTrue(any(t.startswith("✓") and t.endswith("5") for t in marks))
 
+    def test_render_kb_selfie_portrait_label(self):
+        kb = tg_ui.render_options_kb(3, False)
+        labels = [b.text for row in kb.inline_keyboard for b in row]
+        self.assertTrue(any("Селфи" in t for t in labels))
+        self.assertFalse(any("Сгенерировать ИИ" in t for t in labels))
+
     def test_jobs_are_buttons(self):
         kb = tg_ui.jobs_list_kb(
             [{"job_id": "abc123def456", "status": "done", "title": "ИВАНОВ"}]

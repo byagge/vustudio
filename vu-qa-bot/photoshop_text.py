@@ -167,7 +167,7 @@ def substitute_text(
     :param mockup: blank | hand | original
     :param background: 1–10 (для hand/original)
     :param portrait_path: путь к JPG для smart object Photo
-    :param generate_portrait: запросить ИИ-портрет (PORTRAIT_API_URL)
+    :param generate_portrait: dev-only fallback без селфи (PORTRAIT_FALLBACK=1)
     :param output_dir: каталог для PSB/PSD и JPG
     :param dry_run: только собрать job JSON, без Photoshop
     """
@@ -380,7 +380,7 @@ def generate_portrait(
     fields: dict | None = None,
     job_id: str | None = None,
 ) -> "PortraitResult":
-    """Сгенерировать ИИ-портрет по блоку или JSON полей."""
+    """Dev/fallback: портрет без селфи. В проде используйте prepare_upload(селфи)."""
     from portrait_service import PortraitResult, generate_ai_portrait
     from render_models import block_to_dict
 
