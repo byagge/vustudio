@@ -85,6 +85,13 @@ def prepare_upload(data: bytes, user_id: int | str, *, suffix: str = ".jpg", fie
                 provider=enhanced.provider,
                 message=enhanced.message or "Портрет из селфи готов",
             )
+        cfg = PortraitSettings.from_env()
+        if not cfg.fallback_enabled:
+            return PortraitResult(
+                ok=False,
+                provider=enhanced.provider,
+                message=enhanced.message or "ИИ-обработка селфи не удалась",
+            )
         log.warning("portrait AI edit failed, crop only: %s", enhanced.message)
         path = prepare_portrait_file(src, dest, face_focus=True)
         msg = enhanced.message or "ИИ недоступен"

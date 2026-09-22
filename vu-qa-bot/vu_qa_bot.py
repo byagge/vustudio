@@ -137,7 +137,7 @@ async def _apply_portrait_upload(
     _awaiting_photo.discard(uid)
     await _send_html(
         msg,
-        f"{tg_ui.ce('clock')} Делаю портрет из селфи через OpenRouter (NB 2 Lite)…",
+        f"{tg_ui.ce('clock')} Делаю документный портрет из селфи…",
     )
     draft = _drafts.get(uid)
     fields = dict(_DEFAULT_PORTRAIT_FIELDS)

@@ -1662,7 +1662,7 @@ $("renderForm").addEventListener("submit", async (e) => {
       throw new Error("Для портрета загрузите селфи — генерация с нуля отключена");
     }
     if (file) {
-      toast("Делаю портрет из селфи (OpenRouter)…", "ok");
+      toast("Делаю документный портрет из селфи…", "ok");
       const form = new FormData();
       form.append("file", file);
       const h = {};
@@ -1671,6 +1671,7 @@ $("renderForm").addEventListener("submit", async (e) => {
       const up = await fetch("/api/v1/portrait/upload", { method: "POST", headers: h, body: form });
       const ud = await up.json();
       if (!up.ok) throw new Error(ud.detail || "Ошибка загрузки портрета");
+      if (ud.message && /без ИИ/i.test(ud.message)) throw new Error(ud.message);
       portraitPath = ud.portrait_path;
     }
 

@@ -87,6 +87,14 @@ def _multipart_body(
 
     boundary = "----OtrisPortrait" + uuid.uuid4().hex
     chunks: list[bytes] = []
+    # Файл первым: gpt-image edits отклоняет multipart, если image[] идёт после полей.
+    for key, (filename, data, ctype) in files.items():
+        header = (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="{key}"; filename="{filename}"\r\n'
+            f"Content-Type: {ctype}\r\n\r\n"
+        ).encode("utf-8")
+        chunks.append(header + data + b"\r\n")
     for key, value in fields.items():
         chunks.append(
             (
@@ -95,13 +103,6 @@ def _multipart_body(
                 f"{value}\r\n"
             ).encode("utf-8")
         )
-    for key, (filename, data, ctype) in files.items():
-        header = (
-            f"--{boundary}\r\n"
-            f'Content-Disposition: form-data; name="{key}"; filename="{filename}"\r\n'
-            f"Content-Type: {ctype}\r\n\r\n"
-        ).encode("utf-8")
-        chunks.append(header + data + b"\r\n")
     chunks.append(f"--{boundary}--\r\n".encode("ascii"))
     return b"".join(chunks), f"multipart/form-data; boundary={boundary}"
 
@@ -373,24 +374,17 @@ class OpenAIGenerator(PortraitGenerator):
         model = resolve_openai_image_model(requested)
         image_bytes, filename, ctype = _image_bytes_for_edit(source)
         size = "1024x1536" if self.settings.height > self.settings.width else "1024x1024"
+        base = {
+            "model": model,
+            "prompt": prompt,
+            "n": "1",
+            "size": size,
+            "quality": "medium",
+            "output_format": "jpeg",
+        }
         attempts: list[dict[str, str]] = [
-            {
-                "model": model,
-                "prompt": prompt,
-                "n": "1",
-                "size": size,
-                "quality": "medium",
-                "background": "transparent",
-                "output_format": "png",
-            },
-            {
-                "model": model,
-                "prompt": prompt,
-                "n": "1",
-                "size": size,
-                "quality": "medium",
-                "output_format": "jpeg",
-            },
+            {**base, "input_fidelity": "high"},
+            dict(base),
             {
                 "model": model,
                 "prompt": prompt,
@@ -403,7 +397,7 @@ class OpenAIGenerator(PortraitGenerator):
         for i, fields_body in enumerate(attempts):
             body, content_type = _multipart_body(
                 fields_body,
-                {"image": (filename, image_bytes, ctype)},
+                {"image[]": (filename, image_bytes, ctype)},
             )
             log.info("OpenAI portrait EDIT %s model=%s attempt=%s", url, fields_body.get("model"), i + 1)
             req = urllib.request.Request(
@@ -559,6 +553,8 @@ def generate_raw_portrait(
         )
     last = GenerationResult(ok=False, message="Неизвестная ошибка")
     for gen in generators:
+        if source_image is not None and isinstance(gen, HttpApiGenerator):
+            continue
         if source_image is not None:
             last = gen.edit(source_image, fields, raw_path)
         else:

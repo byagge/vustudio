@@ -257,6 +257,29 @@ class TestPortraitService(unittest.TestCase):
         self.assertTrue(_already_enhanced(Path("gen_ab12.jpg")))
         self.assertTrue(_already_enhanced(Path("prep_ab12.jpg")))
 
+    def test_upload_ai_failure_does_not_keep_raw_selfie(self):
+        os.environ["PORTRAIT_PROVIDER"] = "openai"
+        os.environ["PORTRAIT_FALLBACK"] = "0"
+        os.environ["PORTRAIT_OPENAI_API_KEY"] = "sk-test"
+        os.environ["OPENROUTER_API_KEY"] = ""
+        os.environ["PORTRAIT_OPENROUTER_API_KEY"] = ""
+        buf = io.BytesIO()
+        Image.new("RGB", (400, 500), (180, 170, 160)).save(buf, format="JPEG")
+        tmp = tempfile.mkdtemp()
+        os.environ["RENDER_OUTPUT_DIR"] = tmp
+        from portrait_ai import GenerationResult
+
+        with patch("portrait_service.generate_raw_portrait") as gen:
+            gen.return_value = GenerationResult(
+                ok=False,
+                provider="openai",
+                message="OpenAI edits: 400 bad image field",
+            )
+            result = prepare_upload(buf.getvalue(), user_id="web_fail")
+        self.assertFalse(result.ok, result.message)
+        self.assertIn("OpenAI edits", result.message)
+        self.assertFalse((Path(tmp) / "portraits" / "user_web_fail.jpg").is_file())
+
 
 class TestPortraitForceSkipsCache(unittest.TestCase):
     def test_force_regenerates(self):
@@ -520,7 +543,13 @@ class TestOpenAIGeneratorMock(unittest.TestCase):
             self.assertTrue(r.ok, r.message)
             self.assertIn("/v1/images/edits", captured["url"])
             self.assertIn("multipart/form-data", captured["ctype"])
-            self.assertIn(b"background", captured["body"])
+            self.assertIn(b'name="image[]"', captured["body"])
+            self.assertLess(
+                captured["body"].find(b'name="image[]"'),
+                captured["body"].find(b'name="model"'),
+            )
+            self.assertIn(b"input_fidelity", captured["body"])
+            self.assertNotIn(b'name="background"', captured["body"])
             self.assertIn(b"photo.png", captured["body"])
 
     def test_edit_source_is_png_and_resized(self):
