@@ -172,10 +172,22 @@ class PhotoshopRenderer:
             task.options.generate_portrait,
             task.options.portrait_path,
         )
+        wanted_portrait = bool((task.options.portrait_path or "").strip())
         portrait = resolve_portrait(task)
         if portrait:
             task.options.portrait_path = portrait
             log.info("portrait for job %s -> %s", task.job_id, portrait)
+        elif wanted_portrait:
+            from portrait_service import portrait_resolve_error
+
+            message = portrait_resolve_error() or "Селфи не обработано"
+            log.error("portrait refused for job %s: %s", task.job_id, message)
+            return RenderResult(
+                job=RenderJob(record=None, text_block=task.text_block),
+                output_paths=[],
+                status="error",
+                message=message,
+            )
         else:
             log.warning(
                 "portrait missing for job %s generate=%s",

@@ -4,9 +4,10 @@
 ИИ-портрет для smart object Photo.
 
 Приоритет resolve_portrait():
-  1. portrait_path (файл существует)
-     — user_*/gen_*/prep_* уже прогнаны через ИИ при загрузке
-     — прочие файлы прогоняются через ИИ-edit (селфи → документный портрет)
+  1. portrait_path
+     — gen_*/prep_* уже результат ИИ
+     — user_* и любое другое фото гоняются через ИИ-edit
+       (кэш рядом: <имя>_ai.jpg). Без успешного edit сырое селфи на бланк не идёт
   2. generate_portrait без файла — только dev fallback (PORTRAIT_FALLBACK=1)
   3. null — placeholder в PSB
 
@@ -236,15 +237,38 @@ def transform_uploaded_portrait(
     )
 
 
+_resolve_error = ""
+
+
+def portrait_resolve_error() -> str:
+    return _resolve_error
+
+
+def _ai_cache_path(src: Path) -> Path:
+    return src.with_name(f"{src.stem}_ai.jpg")
+
+
+def _selfie_source(src: Path) -> Path:
+    """Оригинал загрузки, если prepare_upload сохранил его рядом."""
+    for name in (f"{src.stem}_src{src.suffix}", f"{src.stem}_src.jpg"):
+        sibling = src.with_name(name)
+        if sibling.is_file():
+            return sibling
+    return src
+
+
 def _already_enhanced(path: Path) -> bool:
+    """gen_/prep_ — уже выход ИИ. user_* само по себе селфи, его надо обработать."""
     stem = path.stem.lower()
     name = path.name.lower()
-    if stem.endswith("_src") or stem.endswith("_raw"):
+    if stem.endswith(("_src", "_raw", "_ai")):
         return False
-    return name.startswith(("gen_", "user_", "prep_"))
+    return name.startswith(("gen_", "prep_"))
 
 
 def resolve_portrait(task: RenderTask) -> str | None:
+    global _resolve_error
+    _resolve_error = ""
     opts = task.options
     cfg = PortraitSettings.from_env()
     log.info(
@@ -260,10 +284,18 @@ def resolve_portrait(task: RenderTask) -> str | None:
         if _already_enhanced(src):
             log.info("portrait use enhanced %s", src)
             return str(src.resolve())
-        out = portraits_dir() / f"prep_{task.job_id}.jpg"
+        cached = _ai_cache_path(src)
+        if (
+            cached.is_file()
+            and cached.stat().st_size >= 100
+            and cached.stat().st_mtime >= src.stat().st_mtime - 1
+        ):
+            log.info("portrait use ai cache %s", cached)
+            return str(cached.resolve())
+        selfie = _selfie_source(src)
         enhanced = transform_uploaded_portrait(
-            src,
-            out,
+            selfie,
+            cached,
             fields=task.fields,
             settings=cfg,
             job_id=task.job_id,
@@ -271,9 +303,14 @@ def resolve_portrait(task: RenderTask) -> str | None:
         if enhanced.ok and enhanced.path:
             log.info("portrait AI-edit job=%s -> %s", task.job_id, enhanced.path)
             return str(enhanced.path.resolve())
-        log.warning("portrait AI-edit skipped: %s", enhanced.message)
+        _resolve_error = enhanced.message or "ИИ-обработка селфи не удалась"
+        if not cfg.fallback_enabled:
+            log.error("portrait AI-edit failed job=%s: %s", task.job_id, _resolve_error)
+            return None
+        log.warning("portrait AI edit failed, crop only: %s", _resolve_error)
+        out = portraits_dir() / f"prep_{task.job_id}.jpg"
         try:
-            prepared = str(finalize_portrait(src, dest=out, settings=cfg, face_focus=True).resolve())
+            prepared = str(finalize_portrait(selfie, dest=out, settings=cfg, face_focus=True).resolve())
             log.info("portrait prepared %s", prepared)
             return prepared
         except Exception:

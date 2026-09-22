@@ -253,9 +253,68 @@ class TestPortraitService(unittest.TestCase):
         self.assertFalse(_already_enhanced(Path("user_1_src.png")))
         self.assertFalse(_already_enhanced(Path("user_1_src.jpg")))
         self.assertFalse(_already_enhanced(Path("edit_job_raw.png")))
-        self.assertTrue(_already_enhanced(Path("user_1.jpg")))
+        self.assertFalse(_already_enhanced(Path("user_1.jpg")))
+        self.assertFalse(_already_enhanced(Path("user_1_ai.jpg")))
         self.assertTrue(_already_enhanced(Path("gen_ab12.jpg")))
         self.assertTrue(_already_enhanced(Path("prep_ab12.jpg")))
+
+    def test_resolve_user_file_runs_ai_edit(self):
+        os.environ["PORTRAIT_PROVIDER"] = "openai"
+        os.environ["PORTRAIT_FALLBACK"] = "0"
+        os.environ["PORTRAIT_OPENAI_API_KEY"] = "sk-test"
+        os.environ["OPENROUTER_API_KEY"] = ""
+        from portrait_ai import GenerationResult
+
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["RENDER_OUTPUT_DIR"] = tmp
+            selfie = Path(tmp) / "user_web_abc.jpg"
+            Image.new("RGB", (80, 100), (10, 20, 30)).save(selfie, format="JPEG")
+
+            def fake_gen(fields, raw_path, settings=None, source_image=None):
+                raw_path.parent.mkdir(parents=True, exist_ok=True)
+                Image.new("RGB", (64, 80), (200, 200, 200)).save(raw_path, format="PNG")
+                return GenerationResult(ok=True, raw_path=raw_path, provider="openai")
+
+            task = RenderTask.create(
+                SAMPLE,
+                options=RenderOptions(
+                    mockup="hand",
+                    portrait_path=str(selfie),
+                    generate_portrait=False,
+                ),
+            )
+            with patch("portrait_service.generate_raw_portrait", side_effect=fake_gen) as gen:
+                path = resolve_portrait(task)
+                gen.assert_called()
+            self.assertIsNotNone(path)
+            self.assertTrue(str(path).endswith("user_web_abc_ai.jpg"))
+            self.assertNotEqual(Path(path).resolve(), selfie.resolve())
+            with patch("portrait_service.generate_raw_portrait", side_effect=AssertionError("cache")):
+                again = resolve_portrait(task)
+            self.assertEqual(path, again)
+
+    def test_resolve_ai_failure_does_not_return_selfie(self):
+        os.environ["PORTRAIT_PROVIDER"] = "openai"
+        os.environ["PORTRAIT_FALLBACK"] = "0"
+        os.environ["PORTRAIT_OPENAI_API_KEY"] = "sk-test"
+        from portrait_ai import GenerationResult
+        from portrait_service import portrait_resolve_error
+
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["RENDER_OUTPUT_DIR"] = tmp
+            selfie = Path(tmp) / "user_web_raw.jpg"
+            Image.new("RGB", (80, 100), (10, 20, 30)).save(selfie, format="JPEG")
+            task = RenderTask.create(
+                SAMPLE,
+                options=RenderOptions(mockup="hand", portrait_path=str(selfie)),
+            )
+            with patch("portrait_service.generate_raw_portrait") as gen:
+                gen.return_value = GenerationResult(
+                    ok=False, provider="openai", message="OpenAI edits: 401"
+                )
+                path = resolve_portrait(task)
+            self.assertIsNone(path)
+            self.assertIn("401", portrait_resolve_error())
 
     def test_upload_ai_failure_does_not_keep_raw_selfie(self):
         os.environ["PORTRAIT_PROVIDER"] = "openai"
