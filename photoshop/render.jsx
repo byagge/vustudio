@@ -614,11 +614,17 @@ var OTRIS_JSX_VERSION = "2026-09-16.1";
             } catch (eN) {
                 nm = "?";
             }
+            // Серия/номер: назначить шрифт до замены, чтобы Photoshop
+            // сохранил метрики, и повторить после замены contents.
+            var fieldFont = mapHas(fontsByName, nm) ? mapGet(fontsByName, nm) : null;
+            if (fieldFont) {
+                setLayerFont(layer, fieldFont, job);
+            }
             if (setTextSafe(layer, value, true)) {
                 hit++;
                 writeLog(null, "set [" + nm + "] => " + value);
-                if (mapHas(fontsByName, nm)) {
-                    setLayerFont(layer, mapGet(fontsByName, nm), job);
+                if (fieldFont) {
+                    setLayerFont(layer, fieldFont, job);
                 }
             }
         }
@@ -724,8 +730,9 @@ var OTRIS_JSX_VERSION = "2026-09-16.1";
             }
             writeLog(null, "text-group replaced=" + replaced + " in '" + docName(doc) + "'");
         }
-        // Дополнительно: любые date-like ячейки таблицы по содержимому.
-        fillDateLikeLayers(doc, values, visibility);
+        // Не заполнять прочие date-like слои подряд: это размазывает даты
+        // по строкам категорий, отсутствующих в пункте 9. Используем только
+        // готовые слоты PSD и их visibility из back_table_layout.
     }
 
     function layerMid(layer) {

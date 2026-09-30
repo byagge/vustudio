@@ -56,6 +56,19 @@ class TestTextRealism(unittest.TestCase):
         block = parse_client_block(SAMPLE)
         self.assertEqual(validate_block(block), [])
 
+    def test_series_has_space_and_back_dates_follow_point_9(self):
+        block = parse_client_block(SAMPLE)
+        block.categories = ["B", "B1"]
+
+        values = build_layer_values(block, load_template("mockup_hand"))
+        payload = build_render_payload(block, load_template("mockup_hand"))
+
+        self.assertEqual(values["full_number"], "04 76 656492")
+        self.assertEqual(set(payload["back_table_map"]), {"B", "B1"})
+        # Hand layout: B=0..3, B1=4..5, M=6..9.
+        self.assertTrue(all(payload["text_group_visibility"][0:6]))
+        self.assertFalse(any(payload["text_group_visibility"][6:10]))
+
     def test_back_table_map_has_dates(self):
         from text_realism import build_back_table_map
 

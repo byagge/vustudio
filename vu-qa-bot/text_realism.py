@@ -79,9 +79,12 @@ def format_field_value(field: str, raw: str, tpl: dict[str, Any]) -> str:
 
 def active_categories(block: VuTextBlock) -> set[str]:
     ensure_back_table(block)
-    cats = {c.upper() for c in block.categories}
-    cats.update(block.back_table.keys())
-    return cats or {"B"}
+    # Пункт 9 на лицевой — единственный источник активных категорий.
+    # Таблица оборота может содержать лишние строки, их нельзя активировать.
+    cats = {c.upper() for c in block.categories if str(c).strip()}
+    if cats:
+        return cats
+    return {str(c).upper() for c in block.back_table} or {"B"}
 
 
 def build_text_group(block: VuTextBlock, tpl: dict[str, Any]) -> tuple[list[str], list[bool]]:
@@ -136,11 +139,14 @@ def build_text_group(block: VuTextBlock, tpl: dict[str, Any]) -> tuple[list[str]
 
 
 def build_back_table_map(block: VuTextBlock) -> dict[str, dict[str, str]]:
-    """Категория → даты для пунктов 10/11 на обороте."""
+    """Категория из пункта 9 → даты для готовых строк 10/11 оборота."""
     ensure_back_table(block)
+    active = active_categories(block)
     out: dict[str, dict[str, str]] = {}
     for cat, row in block.back_table.items():
         key = str(cat).upper()
+        if key not in active:
+            continue
         restr = row.restriction if row.restriction and row.restriction != "—" else ""
         out[key] = {
             "open": row.open_date or "",
@@ -167,13 +173,15 @@ def build_layer_values(block: VuTextBlock, tpl: dict[str, Any]) -> dict[str, str
     series = block.series.replace(" ", "")
     part1 = series[:2] if len(series) >= 2 else series
     part2 = series[2:4] if len(series) >= 4 else ""
-    full_number = f"{block.series} {block.number}".strip()
+    number = block.number.replace(" ", "")
+    # И п.5, и номер на обороте: две пары серии с пробелом + номер.
+    full_number = " ".join(part for part in (part1, part2, number) if part)
     cats = active_categories(block)
 
     raw = {
         "series_part1": part1,
         "series_part2": part2,
-        "number": block.number.replace(" ", ""),
+        "number": number,
         "surname_ru": block.surname_ru,
         "given_ru": block.given_ru,
         "birth_place_ru": block.birth_place_ru,

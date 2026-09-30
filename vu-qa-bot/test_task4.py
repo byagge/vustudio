@@ -125,7 +125,7 @@ class TestTask4Integration(unittest.TestCase):
         )
         self.assertTrue(
             any(
-                row["name"] == "04 76 656492" and "0476" in row["value"]
+                row["name"] == "04 76 656492" and row["value"] == "04 76 656492"
                 for row in job["blank_text_replacements"]
             )
         )
@@ -205,6 +205,7 @@ class TestTask4Integration(unittest.TestCase):
         self.assertIn("_clearBackDates", jsx)
         self.assertIn("applyFontRules", jsx)
         self.assertIn("fonts applied=", jsx)
+        self.assertNotIn("fillDateLikeLayers(doc, values, visibility);", jsx)
         self.assertIn("no-op (replace-only)", jsx)
         self.assertIn("tableRowY", jsx)
         self.assertIn("BACK_ROW_INDEX", jsx)
