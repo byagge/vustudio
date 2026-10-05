@@ -455,13 +455,15 @@ var OTRIS_JSX_VERSION = "2026-09-16.1";
             layer.visible = true;
         } catch (eShow) {}
         var newText = String(text);
+        // AM сохраняет textStyleRange (шрифт/кегль); DOM contents часто сбрасывает метрики.
+        if (setTextViaAM(layer, newText)) {
+            return;
+        }
         try {
             layer.textItem.contents = newText;
             return;
         } catch (eDom) {}
-        if (!setTextViaAM(layer, newText)) {
-            throw new Error("setText failed on '" + layer.name + "'");
-        }
+        throw new Error("setText failed on '" + layer.name + "'");
     }
 
     function setTextSafe(layer, text, visible) {
@@ -470,6 +472,71 @@ var OTRIS_JSX_VERSION = "2026-09-16.1";
             return true;
         } catch (e) {
             writeLog(null, "setText skip '" + layer.name + "': " + e);
+            return false;
+        }
+    }
+
+    function setLayerFontAM(layer, fontName) {
+        if (!selectLayer(layer) || !fontName) {
+            return false;
+        }
+        try {
+            var ref = new ActionReference();
+            ref.putEnumerated(
+                stringIDToTypeID("textLayer"),
+                stringIDToTypeID("ordinal"),
+                stringIDToTypeID("targetEnum")
+            );
+            var current = executeActionGet(ref);
+            if (!current.hasKey(stringIDToTypeID("textKey"))) {
+                return false;
+            }
+            var textKey = current.getObjectValue(stringIDToTypeID("textKey"));
+            var contents = "";
+            try {
+                contents = String(textKey.getString(charIDToTypeID("Txt ")) || "");
+            } catch (eTxt) {}
+            if (!contents) {
+                try {
+                    contents = String(layer.textItem.contents || "");
+                } catch (eDom) {}
+            }
+            if (!textKey.hasKey(stringIDToTypeID("textStyleRange"))) {
+                return false;
+            }
+            var oldList = textKey.getList(stringIDToTypeID("textStyleRange"));
+            if (oldList.count < 1) {
+                return false;
+            }
+            var first = oldList.getObjectValue(0);
+            var style = null;
+            if (first.hasKey(stringIDToTypeID("textStyle"))) {
+                style = first.getObjectValue(stringIDToTypeID("textStyle"));
+            } else {
+                style = new ActionDescriptor();
+            }
+            style.putString(stringIDToTypeID("fontPostScriptName"), String(fontName));
+            try {
+                style.putString(stringIDToTypeID("fontName"), String(fontName));
+            } catch (eFn) {}
+            try {
+                // Faux-bold только если сам шрифт не Bold (иначе «распухнет»).
+                var alreadyBold = /bold/i.test(String(fontName));
+                style.putBoolean(stringIDToTypeID("syntheticBold"), !alreadyBold);
+            } catch (eBold) {}
+            first.putObject(stringIDToTypeID("textStyle"), style);
+            first.putInteger(stringIDToTypeID("from"), 0);
+            first.putInteger(stringIDToTypeID("to"), contents.length || 1);
+            var newList = new ActionList();
+            newList.putObject(stringIDToTypeID("textStyleRange"), first);
+            textKey.putList(stringIDToTypeID("textStyleRange"), newList);
+            var desc = new ActionDescriptor();
+            desc.putReference(charIDToTypeID("null"), ref);
+            desc.putObject(charIDToTypeID("T   "), stringIDToTypeID("textLayer"), textKey);
+            executeAction(charIDToTypeID("setd"), desc, DialogModes.NO);
+            return true;
+        } catch (e) {
+            writeLog(null, "setLayerFontAM: " + e);
             return false;
         }
     }
@@ -486,12 +553,22 @@ var OTRIS_JSX_VERSION = "2026-09-16.1";
             for (var id in job.fonts.catalog) {
                 if (job.fonts.catalog.hasOwnProperty(id)) {
                     var entry = job.fonts.catalog[id];
-                    if (entry.postscript === psName && entry.aliases) {
-                        names = entry.aliases.concat(names);
+                    if (entry.postscript === psName || id === psName) {
+                        if (entry.family) {
+                            names = [entry.family].concat(names);
+                        }
+                        if (entry.postscript) {
+                            names = [entry.postscript].concat(names);
+                        }
+                        if (entry.aliases) {
+                            names = entry.aliases.concat(names);
+                        }
                     }
                 }
             }
         }
+        // Fallback как у остальных полей бланка.
+        names = names.concat(["Arial-BoldMT", "Arial Bold", "ArialMT"]);
         var seen = {};
         for (var i = 0; i < names.length; i++) {
             var candidate = names[i];
@@ -499,11 +576,24 @@ var OTRIS_JSX_VERSION = "2026-09-16.1";
                 continue;
             }
             seen[candidate] = true;
+            if (setLayerFontAM(layer, candidate)) {
+                try {
+                    layer.textItem.font = candidate;
+                } catch (eDom) {}
+                try {
+                    layer.textItem.fauxBold = !/bold/i.test(String(candidate));
+                } catch (eFb) {}
+                return;
+            }
             try {
                 layer.textItem.font = candidate;
+                try {
+                    layer.textItem.fauxBold = !/bold/i.test(String(candidate));
+                } catch (eFb2) {}
                 return;
             } catch (e) {}
         }
+        writeLog(null, "font miss '" + psName + "' on '" + layer.name + "'");
     }
 
     function applyFontRules(doc, job) {
@@ -535,7 +625,19 @@ var OTRIS_JSX_VERSION = "2026-09-16.1";
                 var textLayers = [];
                 collectTextLayers(groups[g], textLayers, true);
                 for (var t = 0; t < textLayers.length; t++) {
-                    setLayerFont(textLayers[t], job.fonts.text_group_postscript, job);
+                    var tgLayer = textLayers[t];
+                    var tgName = "";
+                    try {
+                        tgName = String(tgLayer.name);
+                    } catch (eTgN) {
+                        tgName = "";
+                    }
+                    // Именованные поля (серия/номер) уже получили свой шрифт —
+                    // text_group не должен их перетирать (иначе «плывёт» метрика).
+                    if (tgName && mapHas(byName, tgName)) {
+                        continue;
+                    }
+                    setLayerFont(tgLayer, job.fonts.text_group_postscript, job);
                     applied++;
                 }
             }
@@ -711,24 +813,27 @@ var OTRIS_JSX_VERSION = "2026-09-16.1";
                     " in '" + docName(doc) + "'"
             );
             var replaced = 0;
+            var hidden = 0;
             for (var i = 0; i < textLayers.length; i++) {
                 var val = i < values.length ? values[i] : "";
-                var vis = !visibility || i >= visibility.length ? true : visibility[i];
-                // Пустую строку не пишем — оставляем текст шаблона.
-                // Неактивный слот: только скрыть, без стирания.
-                if (val === null || val === undefined || val === "") {
-                    if (vis === false) {
-                        try {
-                            textLayers[i].visible = false;
-                        } catch (eHidSlot) {}
-                    }
+                // Слоты вне layout / с vis=false — прячем (A/A1 и пр. не из п.9).
+                var vis = (visibility && i < visibility.length) ? visibility[i] : false;
+                if (vis === false || val === null || val === undefined || val === "") {
+                    try {
+                        textLayers[i].visible = false;
+                        hidden++;
+                    } catch (eHidSlot) {}
                     continue;
                 }
-                if (setTextSafe(textLayers[i], val, vis !== false)) {
+                if (setTextSafe(textLayers[i], val, true)) {
                     replaced++;
                 }
             }
-            writeLog(null, "text-group replaced=" + replaced + " in '" + docName(doc) + "'");
+            writeLog(
+                null,
+                "text-group replaced=" + replaced + " hidden=" + hidden +
+                    " in '" + docName(doc) + "'"
+            );
         }
         // Не заполнять прочие date-like слои подряд: это размазывает даты
         // по строкам категорий, отсутствующих в пункте 9. Используем только

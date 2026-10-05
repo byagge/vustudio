@@ -785,10 +785,8 @@ def stamp_back_jpg(
         log.warning("back jpg: empty table for %s", src.name)
         return False
 
-    # Только точечная зачистка: даты уже в JPG из Text SO (replace-only в JSX).
-    # Python не рисует новый текст — иначе дубли и «призраки» поверх шаблона.
-    _scrub_ghost_zones(im, card, g, row_frac)
-
+    # Даты уже в JPG из Text SO (replace-only в JSX).
+    # Ghost-scrub отключён: затирал линии сетки граф 10/11 («не дорисовалось»).
     rows = list(order or DEFAULT_ROWS)
     want = {c.upper() for c in STAMP_CATS}
     touched = 0
@@ -806,8 +804,8 @@ def stamp_back_jpg(
     if touched < 1:
         log.warning("back jpg: no stampable categories on %s", src.name)
         return False
-    im.save(src, format="JPEG", quality=94, optimize=True)
-    log.info("back jpg ghost-clean only, %s cats on %s", touched, src.name)
+    # Карту не пересохраняем без изменений пикселей — сетка остаётся как в PSD.
+    log.info("back jpg pass-through (no scrub), %s cats on %s", touched, src.name)
     return True
 
 

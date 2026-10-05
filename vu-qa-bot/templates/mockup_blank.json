@@ -39,19 +39,23 @@
   },
   "default_restriction": "—",
   "back_table_layout": [
-    {"cat": "B", "fields": ["open", "open", "expiry", "expiry", "open", "expiry"]},
-    {"cat": "B1", "fields": ["open", "expiry"]},
+    {"cat": "B", "fields": ["open"]},
+    {"cat": "B1", "fields": ["open"]},
+    {"cat": "B", "fields": ["expiry"]},
+    {"cat": "B1", "fields": ["expiry"]},
     {"cat": "M", "fields": ["open", "expiry"]},
+    {"cat": "A1", "fields": ["open", "expiry"]},
+    {"cat": "A", "fields": ["open", "expiry"]},
     {"field": "restriction", "visible": false},
     {"field": "special_marks"}
   ],
   "scene": {},
   "fonts": {
     "layer_fields": {
-      "series_part1": "nomer0",
-      "series_part2": "nomer0",
-      "number": "nomer0",
-      "full_number": "nomer"
+      "series_part1": "arial_bold",
+      "series_part2": "arial_bold",
+      "number": "arial_bold",
+      "full_number": "arial_bold"
     }
   }
 }

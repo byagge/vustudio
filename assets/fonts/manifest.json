@@ -12,12 +12,18 @@
       "family": "z_nomer0",
       "postscript": "z_nomer0",
       "aliases": ["z_nomer0"]
+    },
+    "arial_bold": {
+      "system": true,
+      "family": "Arial",
+      "postscript": "Arial-BoldMT",
+      "aliases": ["Arial-BoldMT", "Arial Bold", "Arial"]
     }
   },
   "layer_fields": {
-    "series_part1": "nomer0",
-    "series_part2": "nomer0",
-    "number": "nomer0",
-    "full_number": "nomer"
+    "series_part1": "arial_bold",
+    "series_part2": "arial_bold",
+    "number": "arial_bold",
+    "full_number": "arial_bold"
   }
 }

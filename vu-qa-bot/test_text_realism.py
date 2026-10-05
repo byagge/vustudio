@@ -65,9 +65,10 @@ class TestTextRealism(unittest.TestCase):
 
         self.assertEqual(values["full_number"], "04 76 656492")
         self.assertEqual(set(payload["back_table_map"]), {"B", "B1"})
-        # Hand layout: B=0..3, B1=4..5, M=6..9.
-        self.assertTrue(all(payload["text_group_visibility"][0:6]))
-        self.assertFalse(any(payload["text_group_visibility"][6:10]))
+        # Слоты PSB: B_open,B1_open,B_exp,B1_exp,M_open,M_exp,A1_*,A_*
+        # При B,B1 — только первые 4 слота; M/A1/A скрыты.
+        self.assertTrue(all(payload["text_group_visibility"][0:4]))
+        self.assertFalse(any(payload["text_group_visibility"][4:10]))
 
     def test_back_table_map_has_dates(self):
         from text_realism import build_back_table_map

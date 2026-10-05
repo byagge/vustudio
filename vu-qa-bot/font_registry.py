@@ -33,6 +33,7 @@ class FontSpec:
     family: str
     postscript: str
     aliases: tuple[str, ...]
+    system: bool = False
 
     def postscript_candidates(self) -> tuple[str, ...]:
         seen: list[str] = []
@@ -70,7 +71,9 @@ def list_font_specs() -> list[FontSpec]:
     data = load_manifest()
     out: list[FontSpec] = []
     for font_id, meta in (data.get("fonts") or {}).items():
-        file_path = fonts_dir() / meta["file"]
+        is_system = bool(meta.get("system"))
+        raw_file = meta.get("file") or ""
+        file_path = fonts_dir() / raw_file if raw_file else fonts_dir() / f"{font_id}.system"
         out.append(
             FontSpec(
                 id=font_id,
@@ -78,6 +81,7 @@ def list_font_specs() -> list[FontSpec]:
                 family=meta.get("family") or font_id,
                 postscript=meta.get("postscript") or font_id,
                 aliases=tuple(meta.get("aliases") or ()),
+                system=is_system,
             )
         )
     return out
@@ -91,9 +95,11 @@ def get_font(font_id: str) -> FontSpec:
 
 
 def verify_font_files() -> list[str]:
-    """Проверка наличия TTF на диске."""
+    """Проверка наличия TTF на диске (system-шрифты пропускаем)."""
     errors: list[str] = []
     for spec in list_font_specs():
+        if spec.system:
+            continue
         if not spec.path.is_file():
             errors.append(f"Font file missing: {spec.path}")
     return errors
@@ -142,8 +148,12 @@ def _install_font_windows(path: Path) -> bool:
 
 
 def install_font(spec: FontSpec) -> bool:
-    key = str(spec.path.resolve()).lower()
+    key = str(spec.path.resolve()).lower() if not spec.system else f"system:{spec.id}"
     if key in _installed:
+        return True
+    if spec.system:
+        _installed.add(key)
+        log.info("system font: %s (%s)", spec.id, spec.postscript)
         return True
     if not spec.path.is_file():
         log.error("font file not found: %s", spec.path)
@@ -235,10 +245,15 @@ def fonts_status() -> dict[str, Any]:
         "fonts": [
             {
                 "id": s.id,
-                "file": str(s.path),
-                "exists": s.path.is_file(),
+                "file": str(s.path) if not s.system else "(system)",
+                "exists": True if s.system else s.path.is_file(),
                 "postscript": s.postscript,
-                "installed": str(s.path.resolve()).lower() in _installed,
+                "system": s.system,
+                "installed": (
+                    f"system:{s.id}" in _installed
+                    if s.system
+                    else str(s.path.resolve()).lower() in _installed
+                ),
             }
             for s in specs
         ],

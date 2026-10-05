@@ -13,26 +13,28 @@ class TestFontRegistry(unittest.TestCase):
     def test_specs(self):
         specs = list_font_specs()
         ids = {s.id for s in specs}
-        self.assertEqual(ids, {"nomer", "nomer0"})
+        self.assertEqual(ids, {"nomer", "nomer0", "arial_bold"})
 
     def test_postscript_names(self):
         specs = {s.id: s for s in list_font_specs()}
         self.assertEqual(specs["nomer0"].postscript, "z_nomer0")
         self.assertIn("znomer", specs["nomer"].postscript_candidates())
+        self.assertEqual(specs["arial_bold"].postscript, "Arial-BoldMT")
+        self.assertTrue(specs["arial_bold"].system)
 
     def test_job_fields_blank(self):
         tpl = load_template("mockup_blank")
         fonts = build_font_job_fields(tpl)
         by_name = fonts["by_layer_name"]
-        self.assertEqual(by_name["04"], "z_nomer0")
-        self.assertEqual(by_name["656492"], "z_nomer0")
-        self.assertEqual(by_name["04 76 656492"], "znomer")
-        self.assertIn("nomer0", fonts["catalog"])
+        self.assertEqual(by_name["04"], "Arial-BoldMT")
+        self.assertEqual(by_name["656492"], "Arial-BoldMT")
+        self.assertEqual(by_name["04 76 656492"], "Arial-BoldMT")
+        self.assertIn("arial_bold", fonts["catalog"])
 
     def test_status(self):
         st = fonts_status()
         self.assertFalse(st["errors"])
-        self.assertEqual(len(st["fonts"]), 2)
+        self.assertEqual(len(st["fonts"]), 3)
 
 
 if __name__ == "__main__":
